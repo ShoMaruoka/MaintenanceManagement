@@ -1,22 +1,17 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import type { DbName, Module, ModuleType, OpType, SelectedModule } from '../types'
 import ConfirmDialog from '../components/ConfirmDialog'
 import LogViewer from '../components/LogViewer'
-import { getModules } from '../api/modules'
+import { getDbList, getModules } from '../api/modules'
+import type { DbListItem } from '../api/modules'
 
-const DB_CONFIGS: { name: DbName; devDb: string }[] = [
-  { name: 'kaios',  devDb: 'kaios_dev' },
-  { name: 'gos',    devDb: 'gos_dev' },
-  { name: 'paf',    devDb: 'paf_dev' },
-  { name: 'duskin', devDb: 'duskin_dev' },
-]
-
-const MODULE_TYPES: { type: ModuleType; gitOnly?: boolean }[] = [
-  { type: 'StoredProcedure' },
-  { type: 'Function' },
-  { type: 'VIEW' },
-  { type: 'Table', gitOnly: true },
-  { type: 'MariaDB' },
+const MODULE_TYPES: ModuleType[] = [
+  'StoredProcedure',
+  'Function',
+  'VIEW',
+  'Table',
+  'UserDefinedTableType',
+  'MariaDB',
 ]
 
 const OP_TYPES: OpType[] = ['更新', '新規', '削除']
@@ -24,6 +19,7 @@ const OP_TYPES: OpType[] = ['更新', '新規', '削除']
 type PageState = 'select' | 'confirm' | 'log' | 'done'
 
 export default function DeployStg() {
+  const [dbConfigs, setDbConfigs] = useState<DbListItem[]>([])
   const [selectedDb, setSelectedDb] = useState<DbName>('kaios')
   const [activeType, setActiveType] = useState<ModuleType>('StoredProcedure')
   const [selectedModules, setSelectedModules] = useState<Map<string, OpType>>(new Map())
@@ -37,6 +33,10 @@ export default function DeployStg() {
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string>('')
+
+  useEffect(() => {
+    getDbList().then(setDbConfigs).catch(() => {})
+  }, [])
 
   useEffect(() => {
     const loadModules = async () => {
@@ -93,11 +93,16 @@ export default function DeployStg() {
   const opsCount = { '新規': 0, '更新': 0, '削除': 0 }
   selectedModules.forEach(op => { opsCount[op] = (opsCount[op] ?? 0) + 1 })
 
-  const confirmModules: SelectedModule[] = Array.from(selectedModules.entries()).map(([name, opType]) => {
-    const allModules = Object.values(modulesByDb[selectedDb] ?? {}).flat()
-    const found = allModules.find(m => m.name === name)
-    return { name, opType, type: found?.type ?? 'StoredProcedure' }
-  })
+  const confirmModules = useMemo((): SelectedModule[] =>
+    Array.from(selectedModules.entries()).map(([name, opType]) => {
+      const allModules = Object.values(modulesByDb[selectedDb] ?? {}).flat()
+      const found = allModules.find(m => m.name === name)
+      return { name, opType, type: found?.type ?? 'StoredProcedure' }
+    }),
+    [selectedModules, modulesByDb, selectedDb],
+  )
+
+  const handleDone = useCallback(() => setPageState('done'), [])
 
   if (pageState === 'log' || pageState === 'done') {
     return (
@@ -105,7 +110,7 @@ export default function DeployStg() {
         <LogViewer
           dbName={selectedDb}
           modules={confirmModules}
-          onDone={() => setPageState('done')}
+          onDone={handleDone}
         />
         {pageState === 'done' && (
           <div style={{ padding: '12px 0 0' }}>
@@ -124,7 +129,7 @@ export default function DeployStg() {
       <div className="db-selector">
         <div className="db-selector-label">DB 選択</div>
         <div className="db-selector-list">
-          {DB_CONFIGS.map(db => (
+          {dbConfigs.map(db => (
             <div
               key={db.name}
               className={`db-item${selectedDb === db.name ? ' selected' : ''}`}
@@ -165,7 +170,7 @@ export default function DeployStg() {
           {/* Category tabs */}
           <div className="module-categories">
             <div className="module-cat-label">種別</div>
-            {MODULE_TYPES.map(({ type, gitOnly }) => {
+            {MODULE_TYPES.map((type) => {
               const modules = modulesByDb[selectedDb]?.[type] ?? []
               const selCount = modules.filter(m => selectedModules.has(m.name)).length
               return (
@@ -175,11 +180,9 @@ export default function DeployStg() {
                   onClick={() => { setActiveType(type); setSearch('') }}
                 >
                   <span className="module-cat-name">{type}</span>
-                  {gitOnly
-                    ? <span className="module-cat-tag-git">Git のみ</span>
-                    : selCount > 0
-                      ? <span className="module-cat-count-selected">{selCount}/{modules.length}</span>
-                      : <span className="module-cat-count">{modules.length}</span>
+                  {selCount > 0
+                    ? <span className="module-cat-count-selected">{selCount}/{modules.length}</span>
+                    : <span className="module-cat-count">{modules.length}</span>
                   }
                 </div>
               )

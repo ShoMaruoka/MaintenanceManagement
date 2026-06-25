@@ -4,6 +4,7 @@ import type { DbName, Module, ModuleType } from '../types'
 export interface DbListItem {
   name: DbName
   devDb: string
+  stgDb: string
   prdDb: string
 }
 

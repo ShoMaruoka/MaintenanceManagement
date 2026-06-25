@@ -19,24 +19,24 @@ public class ModuleQueryService
 
         var sqlTasks = new[]
         {
-            QuerySqlServerAsync(config.SqlServerConnectionString, """
+            QuerySqlServerAsync(config.DevConnectionString, """
                 SELECT name, CONVERT(varchar(16), modify_date, 120) as modify_date
                 FROM sys.procedures WHERE is_ms_shipped = 0 ORDER BY name
                 """, "StoredProcedure", false),
-            QuerySqlServerAsync(config.SqlServerConnectionString, """
+            QuerySqlServerAsync(config.DevConnectionString, """
                 SELECT name, CONVERT(varchar(16), modify_date, 120) as modify_date
                 FROM sys.objects WHERE type IN ('FN','TF','IF') AND is_ms_shipped = 0 ORDER BY name
                 """, "Function", false),
-            QuerySqlServerAsync(config.SqlServerConnectionString, """
+            QuerySqlServerAsync(config.DevConnectionString, """
                 SELECT name, CONVERT(varchar(16), modify_date, 120) as modify_date
                 FROM sys.views WHERE is_ms_shipped = 0 ORDER BY name
                 """, "VIEW", false),
-            QuerySqlServerAsync(config.SqlServerConnectionString, """
+            QuerySqlServerAsync(config.DevConnectionString, """
                 SELECT name, CONVERT(varchar(16), modify_date, 120) as modify_date
                 FROM sys.tables WHERE is_ms_shipped = 0 ORDER BY name
                 """, "Table", true),
-            QuerySqlServerAsync(config.SqlServerConnectionString, """
-                SELECT name, CONVERT(varchar(16), modify_date, 120) as modify_date
+            QuerySqlServerAsync(config.DevConnectionString, """
+                SELECT name, NULL as modify_date
                 FROM sys.types WHERE is_user_defined = 1 AND is_table_type = 1 ORDER BY name
                 """, "UserDefinedTableType", true),
         };

@@ -117,8 +117,13 @@ public class DatabaseService
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT SessionId, DbName, ExecutedBy, ExecutedAt, Status, ErrorMessage
-            FROM DeploySession ORDER BY SessionId DESC LIMIT $limit;
+            SELECT ds.SessionId, ds.DbName, ds.ExecutedBy, ds.ExecutedAt, ds.Status, ds.ErrorMessage,
+                   COUNT(dsd.DetailId) as ModuleCount,
+                   GROUP_CONCAT(dsd.OpType || ':' || dsd.ModuleType || ':' || dsd.ModuleName, '|') as ModuleSummary
+            FROM DeploySession ds
+            LEFT JOIN DeploySessionDetail dsd ON ds.SessionId = dsd.SessionId
+            GROUP BY ds.SessionId, ds.DbName, ds.ExecutedBy, ds.ExecutedAt, ds.Status, ds.ErrorMessage
+            ORDER BY ds.SessionId DESC LIMIT $limit;
             """;
         cmd.Parameters.AddWithValue("$limit", limit);
 
@@ -126,6 +131,10 @@ public class DatabaseService
         using var reader = cmd.ExecuteReader();
         while (reader.Read())
         {
+            var moduleCount = reader.IsDBNull(6) ? 0 : (int)reader.GetInt64(6);
+            var moduleSummary = reader.IsDBNull(7) ? null : reader.GetString(7);
+            var details = BuildDetailsFromSummary(reader.GetInt64(0), moduleSummary);
+
             sessions.Add(new DeploySession
             {
                 SessionId    = reader.GetInt64(0),
@@ -134,9 +143,29 @@ public class DatabaseService
                 ExecutedAt   = reader.GetString(3),
                 Status       = reader.GetString(4),
                 ErrorMessage = reader.IsDBNull(5) ? null : reader.GetString(5),
+                Details      = details,
             });
         }
         return sessions;
+    }
+
+    private static List<DeploySessionDetail> BuildDetailsFromSummary(long sessionId, string? summary)
+    {
+        if (string.IsNullOrEmpty(summary)) return [];
+        return summary.Split('|')
+            .Select(part =>
+            {
+                var pieces = part.Split(':', 3);
+                return new DeploySessionDetail
+                {
+                    SessionId  = sessionId,
+                    OpType     = pieces.Length > 0 ? pieces[0] : "",
+                    ModuleType = pieces.Length > 1 ? pieces[1] : "",
+                    ModuleName = pieces.Length > 2 ? pieces[2] : "",
+                    Result     = "success",
+                };
+            })
+            .ToList();
     }
 
     public List<DeploySessionDetail> GetSessionDetails(long sessionId)

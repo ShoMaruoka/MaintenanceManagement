@@ -624,7 +624,7 @@ input {
 
 /* ---- Module Category Tabs ---- */
 .module-categories {
-  width: 182px;
+  width: 230px;
   flex: none;
   border-right: 1px solid #eef0f2;
   background: #fafbfc;

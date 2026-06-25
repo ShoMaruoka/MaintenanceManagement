@@ -7,3 +7,5 @@ data/
 test/
 frontend/node_modules/
 docs/ignore/
+backend/appsettings.json
+backend/wwwroot/

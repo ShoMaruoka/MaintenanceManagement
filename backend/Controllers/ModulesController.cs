@@ -30,7 +30,7 @@ public class ModulesController : ControllerBase
     [HttpGet]
     public IActionResult GetDbList()
     {
-        var list = _dbConfigs.Select(c => new { c.Name, c.DevDb, c.PrdDb });
+        var list = _dbConfigs.Select(c => new { c.Name, c.DevDb, c.StgDb, c.PrdDb });
         return Ok(list);
     }
 }

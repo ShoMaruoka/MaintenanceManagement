@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Channels;
 using Microsoft.AspNetCore.Mvc;
 using MaintenanceManagement.Api.Models;
@@ -11,6 +12,11 @@ namespace MaintenanceManagement.Api.Controllers;
 [Route("api/[controller]")]
 public class PrepareController : ControllerBase
 {
+    private static readonly JsonSerializerOptions _camelCase = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
     private readonly FastCopyService _fastCopy;
     private readonly DatabaseService _db;
     private readonly List<DbConfig> _dbConfigs;
@@ -65,7 +71,7 @@ public class PrepareController : ControllerBase
 
             _db.InsertProductionReadyLog(executedBy, applied, held, "success", logDetail);
 
-            var doneJson = JsonSerializer.Serialize(new { type = "done", applied, held });
+            var doneJson = JsonSerializer.Serialize(new { type = "done", applied, held }, _camelCase);
             await Response.Body.WriteAsync(Encoding.UTF8.GetBytes($"data: {doneJson}\n\n"), ct);
             await Response.Body.FlushAsync(ct);
         }
@@ -81,7 +87,7 @@ public class PrepareController : ControllerBase
     {
         await foreach (var entry in reader.ReadAllAsync(ct))
         {
-            var json = JsonSerializer.Serialize(entry);
+            var json = JsonSerializer.Serialize(entry, _camelCase);
             var data = $"data: {json}\n\n";
             await Response.Body.WriteAsync(Encoding.UTF8.GetBytes(data), ct);
             await Response.Body.FlushAsync(ct);

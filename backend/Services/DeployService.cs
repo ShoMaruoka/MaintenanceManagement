@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text;
 using System.Threading.Channels;
 using MaintenanceManagement.Api.Models;
@@ -12,6 +13,9 @@ public class DeployService
     private static readonly HashSet<string> GitOnlyTypes =
         new(["Table", "UserDefinedTableType"], StringComparer.OrdinalIgnoreCase);
 
+    // DB ごとの実行中フラグ（重複リクエスト防止）
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> _dbLocks = new();
+
     public DeployService(IConfiguration config, ILogger<DeployService> logger)
     {
         _dryRun = config.GetValue<bool>("DryRun");
@@ -20,8 +24,28 @@ public class DeployService
 
     public ChannelReader<LogEntry> ExecuteAsync(DbConfig dbConfig, DeployRequest request, string executedBy, CancellationToken ct)
     {
+        var semaphore = _dbLocks.GetOrAdd(dbConfig.Name, _ => new SemaphoreSlim(1, 1));
         var channel = Channel.CreateUnbounded<LogEntry>();
-        _ = Task.Run(() => RunPipelineAsync(channel.Writer, dbConfig, request, executedBy, ct), ct);
+
+        _ = Task.Run(async () =>
+        {
+            // 同一 DB の並列実行を拒否（React StrictMode の 2重リクエスト等を防止）
+            if (!semaphore.Wait(0))
+            {
+                await Log(channel.Writer, "WARN", "このDBは既にデプロイ実行中です。重複リクエストをスキップします。");
+                channel.Writer.Complete();
+                return;
+            }
+            try
+            {
+                await RunPipelineAsync(channel.Writer, dbConfig, request, executedBy, ct);
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        }, ct);
+
         return channel.Reader;
     }
 
@@ -111,8 +135,8 @@ public class DeployService
         if (!_dryRun)
         {
             Directory.CreateDirectory(config.MergePath);
-            await File.WriteAllTextAsync(updatePath, string.Join("\r\n", updateModules.Select(m => m.Name)), sjis);
-            await File.WriteAllTextAsync(deletePath, string.Join("\r\n", deleteModules.Select(m => m.Name)), sjis);
+            await File.WriteAllTextAsync(updatePath, string.Join("\r\n", updateModules.Select(m => $"{m.Type},{m.Name}")), sjis);
+            await File.WriteAllTextAsync(deletePath, string.Join("\r\n", deleteModules.Select(m => $"{m.Type},{m.Name}")), sjis);
         }
     }
 
@@ -132,7 +156,7 @@ public class DeployService
 
     private async Task Step3_GitMerge(ChannelWriter<LogEntry> w, DbConfig config, DeployRequest request, string tag, CancellationToken ct)
     {
-        var batPath = Path.Combine(config.SourceControlPath, "git_merge.bat");
+        var batPath = Path.Combine(config.MergePath, "git_merge.bat");
         await Log(w, "DETAIL", $"→ {batPath}{tag}");
 
         if (_dryRun)
@@ -141,34 +165,31 @@ public class DeployService
             await Log(w, "DETAIL", "[DRY-RUN] Merge simulated (no actual git operation)");
             return;
         }
-        await RunBatAsync(w, batPath, config.SourceControlPath, ct);
+        await RunBatAsync(w, batPath, config.MergePath, ct);
     }
 
     private async Task Step4_SqlConvert(ChannelWriter<LogEntry> w, DbConfig config, List<DeployModule> modules, string tag)
     {
+        Directory.CreateDirectory(config.DeploySourcePath);
         foreach (var m in modules)
         {
-            var srcPath = Path.Combine(config.GitRepoPath, m.Type, $"{m.Name}.sql");
-            var destPath = Path.Combine(config.DeploySourcePath, m.Type, $"{m.Name}.sql");
+            var srcPath = Path.Combine(config.GitRepoPath, m.Type, $"dbo.{m.Name}.sql");
+            var destPath = Path.Combine(config.DeploySourcePath, $"dbo.{m.Name}.sql");
 
             if (m.OpType == "新規")
             {
-                await Log(w, "DETAIL", $"→ {m.Type}/{m.Name}.sql  [新規] ALTER→CREATE 置換{tag}");
+                await Log(w, "DETAIL", $"→ dbo.{m.Name}.sql  [新規] ALTER→CREATE 置換{tag}");
                 if (!_dryRun) await ConvertAlterToCreate(srcPath, destPath);
             }
             else if (m.OpType == "削除")
             {
-                await Log(w, "DETAIL", $"→ {m.Type}/{m.Name}.sql  [削除] DROP 文を生成{tag}");
+                await Log(w, "DETAIL", $"→ dbo.{m.Name}.sql  [削除] DROP 文を生成{tag}");
                 if (!_dryRun) await GenerateDropSql(m, destPath);
             }
             else
             {
-                await Log(w, "DETAIL", $"→ {m.Type}/{m.Name}.sql  [更新] copy{tag}");
-                if (!_dryRun)
-                {
-                    Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
-                    File.Copy(srcPath, destPath, overwrite: true);
-                }
+                await Log(w, "DETAIL", $"→ dbo.{m.Name}.sql  [更新] copy{tag}");
+                if (!_dryRun) File.Copy(srcPath, destPath, overwrite: true);
             }
         }
     }
@@ -181,7 +202,7 @@ public class DeployService
             return;
         }
 
-        var batPath = Path.Combine(config.DeployDev2StgPath, "deploy.bat");
+        var batPath = Path.Combine(config.ForNewCreationPath, "deploy.bat");
         await Log(w, "DETAIL", $"→ {batPath}{tag}");
 
         if (_dryRun)
@@ -190,7 +211,7 @@ public class DeployService
             await Log(w, "INFO", $"[DRY-RUN] deploy.bat スキップ (exit code 0 simulated)", stepDone: "deploy");
             return;
         }
-        await RunBatAsync(w, batPath, config.DeployDev2StgPath, ct);
+        await RunBatAsync(w, batPath, config.ForNewCreationPath, ct);
         await Log(w, "OK", "deploy.bat 完了 (exit code 0)", stepDone: "deploy");
     }
 
@@ -205,17 +226,14 @@ public class DeployService
         var sourceDir = config.DeploySourcePath;
         var deployedDir = config.DeployedPath;
 
+        if (!_dryRun) Directory.CreateDirectory(deployedDir);
         foreach (var m in deployModules)
         {
-            var src = Path.Combine(sourceDir, m.Type, $"{m.Name}.sql");
-            var dest = Path.Combine(deployedDir, m.Type, $"{m.Name}.sql");
-            await Log(w, "DETAIL", $"→ {Path.GetFileName(src)} → deployed/{tag}");
+            var src = Path.Combine(sourceDir, $"dbo.{m.Name}.sql");
+            var dest = Path.Combine(deployedDir, $"dbo.{m.Name}.sql");
+            await Log(w, "DETAIL", $"→ dbo.{m.Name}.sql → deployed/{tag}");
 
-            if (!_dryRun)
-            {
-                Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
-                File.Move(src, dest, overwrite: true);
-            }
+            if (!_dryRun) File.Move(src, dest, overwrite: true);
         }
     }
 
@@ -225,7 +243,6 @@ public class DeployService
         var content = await File.ReadAllTextAsync(srcPath, sjis);
         content = content.Replace("ALTER PROCEDURE", "CREATE OR ALTER PROCEDURE", StringComparison.OrdinalIgnoreCase);
         content = content.Replace("ALTER FUNCTION", "CREATE OR ALTER FUNCTION", StringComparison.OrdinalIgnoreCase);
-        Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
         await File.WriteAllTextAsync(destPath, content, sjis);
     }
 
@@ -255,7 +272,8 @@ public class DeployService
         proc.StartInfo = new System.Diagnostics.ProcessStartInfo
         {
             FileName = "cmd.exe",
-            Arguments = $"/c \"{batPath}\"",
+            // chcp 932 を先行して設定し、bat およびその子プロセス（PowerShell 等）が SJIS で動作するようにする
+            Arguments = $"/c \"chcp 932 > nul && \"{batPath}\"\"",
             WorkingDirectory = workingDir,
             RedirectStandardOutput = true,
             RedirectStandardError = true,

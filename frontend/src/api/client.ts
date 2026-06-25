@@ -22,7 +22,7 @@ export async function fetchJson<T>(path: string, options?: FetchOptions): Promis
 export async function fetchStream<T>(
   path: string,
   onData: (data: T) => void,
-  options?: FetchOptions,
+  options?: FetchOptions & { signal?: AbortSignal },
   onError?: (error: Error) => void,
 ): Promise<void> {
   const url = `${API_BASE}${path}`

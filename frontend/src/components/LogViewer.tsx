@@ -17,15 +17,7 @@ const STEPS: { key: StepState['key']; label: string }[] = [
   { key: 'record',     label: '記録' },
 ]
 
-function getStepFromMessage(message: string): StepState['key'] | undefined {
-  if (message.includes('生成完了')) return 'generate'
-  if (message.includes('Live Updates 完了')) return 'git-update'
-  if (message.includes('merge 完了')) return 'merge'
-  if (message.includes('SQL 変換完了')) return 'sql-convert'
-  if (message.includes('deploy.bat')) return 'deploy'
-  if (message.includes('完了しました')) return 'record'
-  return undefined
-}
+const VALID_STEPS = new Set(['generate', 'git-update', 'merge', 'sql-convert', 'deploy', 'record'] as const)
 
 export default function LogViewer({ dbName, modules, onDone }: Props) {
   const [lines, setLines] = useState<LogLine[]>([])
@@ -36,18 +28,20 @@ export default function LogViewer({ dbName, modules, onDone }: Props) {
   const [isRunning, setIsRunning] = useState(true)
   const logRef = useRef<HTMLDivElement>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
+  // ref で最新の onDone を保持することで deps から除外し、StrictMode 2重実行を防ぐ
+  const onDoneRef = useRef(onDone)
+  onDoneRef.current = onDone
 
+  // デプロイはマウント時に1回だけ実行する（deps [] = StrictMode の2重呼び出しを防止）
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    abortControllerRef.current = new AbortController()
-    setLines([])
-    setStepStates(new Map(STEPS.map(s => [s.key, 'pending'])))
-    setCurrentStep('generate')
-    setIsRunning(true)
+    const ac = new AbortController()
+    abortControllerRef.current = ac
 
-    const handleLog = (line: LogLine) => {
+    const handleLog = (line: LogLine, stepKey?: string) => {
       setLines(prev => [...prev, line])
-      const step = getStepFromMessage(line.message)
-      if (step) {
+      if (stepKey && VALID_STEPS.has(stepKey as StepState['key'])) {
+        const step = stepKey as StepState['key']
         setStepStates(prev => {
           const next = new Map(prev)
           next.set(step, 'done')
@@ -60,15 +54,15 @@ export default function LogViewer({ dbName, modules, onDone }: Props) {
 
     const handleDone = () => {
       setIsRunning(false)
-      onDone()
+      onDoneRef.current()
     }
 
-    startDeploy(dbName, modules, handleLog, handleDone)
+    startDeploy(dbName, modules, handleLog, handleDone, undefined, ac.signal)
 
     return () => {
-      abortControllerRef.current?.abort()
+      ac.abort()
     }
-  }, [dbName, modules, onDone])
+  }, [])
 
   useEffect(() => {
     if (logRef.current) {

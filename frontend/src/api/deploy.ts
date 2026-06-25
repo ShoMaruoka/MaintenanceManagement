@@ -33,9 +33,10 @@ function isDeployDone(event: any): event is ApiDeployDone {
 export function startDeploy(
   dbName: DbName,
   modules: SelectedModule[],
-  onLog: (line: LogLine) => void,
+  onLog: (line: LogLine, step?: string) => void,
   onDone: (sessionId: number) => void,
   onError?: (error: Error) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const request: ApiDeployRequest = {
     dbName,
@@ -57,12 +58,13 @@ export function startDeploy(
           level: event.level,
           message: event.message,
         }
-        onLog(logEntry)
+        onLog(logEntry, event.step)
       }
     },
     {
       method: 'POST',
       body: JSON.stringify(request),
+      signal,
     },
     onError,
   )

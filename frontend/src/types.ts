@@ -9,6 +9,8 @@ export type SessionStatus = 'running' | 'success' | 'failed'
 export interface DbConfig {
   name: DbName
   devDb: string
+  stgDb: string
+  prdDb: string
 }
 
 export interface Module {

@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Mvc;
 using MaintenanceManagement.Api.Models;
 using MaintenanceManagement.Api.Services;
@@ -20,6 +21,12 @@ public class DeployController : ControllerBase
         _db = db;
         _dbConfigs = config.GetSection("DbConfigs").Get<List<DbConfig>>() ?? [];
     }
+
+    private static readonly JsonSerializerOptions _camelCase = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
 
     [HttpPost("stream")]
     public async Task StreamDeploy([FromBody] DeployRequest request, CancellationToken ct)
@@ -48,7 +55,7 @@ public class DeployController : ControllerBase
             var reader = _deployService.ExecuteAsync(dbConfig, request, executedBy, ct);
             await foreach (var entry in reader.ReadAllAsync(ct))
             {
-                var json = JsonSerializer.Serialize(entry);
+                var json = JsonSerializer.Serialize(entry, _camelCase);
                 var data = $"data: {json}\n\n";
                 await Response.Body.WriteAsync(Encoding.UTF8.GetBytes(data), ct);
                 await Response.Body.FlushAsync(ct);
@@ -76,7 +83,7 @@ public class DeployController : ControllerBase
             _db.InsertDeployDetail(sessionId, m.OpType, m.Type, m.Name, success ? "success" : "failed");
         }
 
-        var doneJson = JsonSerializer.Serialize(new { type = "done", sessionId });
+        var doneJson = JsonSerializer.Serialize(new { type = "done", sessionId }, _camelCase);
         await Response.Body.WriteAsync(Encoding.UTF8.GetBytes($"data: {doneJson}\n\n"), ct);
         await Response.Body.FlushAsync(ct);
     }
