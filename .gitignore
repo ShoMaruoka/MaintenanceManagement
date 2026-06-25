@@ -1,2 +1,9 @@
 SQLServerモジュール適用時ツール/
 メンテナンス前日作ツール/
+backend/bin/
+backend/obj/
+backend/appsettings.Development.json
+data/
+test/
+frontend/node_modules/
+docs/ignore/
