@@ -1,4 +1,5 @@
-import { NavLink } from 'react-router-dom'
+import { NavLink, useNavigate } from 'react-router-dom'
+import { useUser } from '../context/UserContext'
 
 const NAV_ITEMS = [
   {
@@ -46,7 +47,30 @@ const NAV_ITEMS = [
   },
 ]
 
+const ADMIN_ITEMS = [
+  {
+    to: '/admin/users',
+    label: 'ユーザー管理',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <circle cx="8" cy="5" r="3" stroke="currentColor" strokeWidth="1.4"/>
+        <path d="M2 14c0-3.314 2.686-5 6-5s6 1.686 6 5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/>
+      </svg>
+    ),
+  },
+]
+
 export default function Sidebar() {
+  const { currentUser, currentRole, clearUser } = useUser()
+  const navigate = useNavigate()
+
+  const handleSwitch = () => {
+    clearUser()
+    navigate('/select-user')
+  }
+
+  const avatarChar = currentUser ? currentUser.charAt(0).toUpperCase() : '?'
+
   return (
     <aside className="sidebar">
       <div className="sidebar-logo">
@@ -71,6 +95,24 @@ export default function Sidebar() {
             {item.label}
           </NavLink>
         ))}
+
+        {currentRole === 'admin' && (
+          <>
+            <div className="sidebar-nav-label" style={{ marginTop: 12 }}>管理</div>
+            {ADMIN_ITEMS.map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) =>
+                  `sidebar-nav-item${isActive ? ' active' : ''}`
+                }
+              >
+                {item.icon}
+                {item.label}
+              </NavLink>
+            ))}
+          </>
+        )}
       </nav>
 
       <div className="sidebar-info-card">
@@ -83,12 +125,18 @@ export default function Sidebar() {
       </div>
 
       <div className="sidebar-user">
-        <div className="sidebar-user-avatar">山</div>
-        <div>
-          <div className="sidebar-user-name">yamada</div>
-          <div className="sidebar-user-domain">TANAKA\ ・ Win認証</div>
+        <div className="sidebar-user-avatar">{avatarChar}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="sidebar-user-name">{currentUser ?? '未選択'}</div>
+          <div className="sidebar-user-domain">社内ユーザー</div>
         </div>
       </div>
+      <button className="sidebar-switch-btn" onClick={handleSwitch}>
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="none">
+          <path d="M3 8h10M9 4l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+        ユーザー切り替え
+      </button>
     </aside>
   )
 }

@@ -1,3 +1,9 @@
+export interface AppUser {
+  userName: string
+  displayName: string
+  role: 'admin' | 'user'
+}
+
 export type DbName = 'kaios' | 'gos' | 'paf' | 'duskin'
 
 export type ModuleType = 'StoredProcedure' | 'Function' | 'VIEW' | 'Table' | 'UserDefinedTableType' | 'MariaDB'

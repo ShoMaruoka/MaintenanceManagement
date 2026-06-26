@@ -45,8 +45,67 @@ public class DatabaseService
                 Result       TEXT NOT NULL,
                 LogDetail    TEXT
             );
+            CREATE TABLE IF NOT EXISTS AppUser (
+                UserId      INTEGER PRIMARY KEY AUTOINCREMENT,
+                UserName    TEXT NOT NULL UNIQUE,
+                DisplayName TEXT NOT NULL,
+                CreatedAt   TEXT NOT NULL DEFAULT (datetime('now'))
+            );
             """;
         cmd.ExecuteNonQuery();
+
+        // Role カラムが存在しない場合は追加（既存 DB の後方互換）
+        try
+        {
+            using var alter = conn.CreateCommand();
+            alter.CommandText = "ALTER TABLE AppUser ADD COLUMN Role TEXT NOT NULL DEFAULT 'user';";
+            alter.ExecuteNonQuery();
+        }
+        catch { /* 既にカラムが存在する場合は無視 */ }
+    }
+
+    public List<AppUser> GetAllUsers()
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT UserId, UserName, DisplayName, Role FROM AppUser ORDER BY UserId;";
+        var users = new List<AppUser>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            users.Add(new AppUser
+            {
+                UserId      = reader.GetInt64(0),
+                UserName    = reader.GetString(1),
+                DisplayName = reader.GetString(2),
+                Role        = reader.GetString(3),
+            });
+        }
+        return users;
+    }
+
+    public AppUser AddUser(string userName, string displayName, string role = "user")
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO AppUser (UserName, DisplayName, Role) VALUES ($userName, $displayName, $role);
+            SELECT last_insert_rowid();
+            """;
+        cmd.Parameters.AddWithValue("$userName", userName);
+        cmd.Parameters.AddWithValue("$displayName", displayName);
+        cmd.Parameters.AddWithValue("$role", role);
+        var id = (long)(cmd.ExecuteScalar() ?? 0);
+        return new AppUser { UserId = id, UserName = userName, DisplayName = displayName, Role = role };
+    }
+
+    public bool DeleteUser(string userName)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "DELETE FROM AppUser WHERE UserName = $userName;";
+        cmd.Parameters.AddWithValue("$userName", userName);
+        return cmd.ExecuteNonQuery() > 0;
     }
 
     public long InsertDeploySession(string dbName, string executedBy)

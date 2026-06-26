@@ -21,6 +21,7 @@ export interface ApiPrepareSelection {
 }
 
 export interface ApiPrepareRequest {
+  executedBy: string
   selections: ApiPrepareSelection[]
 }
 
@@ -48,11 +49,12 @@ export async function getPrepareFiles(): Promise<ApiPrepareDbEntry[]> {
 
 export function startPrepare(
   selections: ApiPrepareSelection[],
+  executedBy: string,
   onLog: (line: LogLine) => void,
   onDone: (applied: number, held: number) => void,
   onError?: (error: Error) => void,
 ): Promise<void> {
-  const request: ApiPrepareRequest = { selections }
+  const request: ApiPrepareRequest = { executedBy, selections }
 
   return fetchStream<ApiPrepareStreamEvent>(
     '/prepare/stream',

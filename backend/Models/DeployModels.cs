@@ -3,6 +3,7 @@ namespace MaintenanceManagement.Api.Models;
 public class DeployRequest
 {
     public string DbName { get; set; } = "";
+    public string ExecutedBy { get; set; } = "";
     public List<DeployModule> Modules { get; set; } = [];
 }
 
