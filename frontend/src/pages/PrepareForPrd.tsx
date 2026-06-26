@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react'
 import type { DbName, LogLine } from '../types'
 import { getPrepareFiles, startPrepare, type ApiPrepareSelection } from '../api/prepare'
+import { useUser } from '../context/UserContext'
 
 type PageState = 'select' | 'confirm' | 'running' | 'done'
 
@@ -20,6 +21,7 @@ function fileKey(dbName: DbName, file: PrepareFile) {
 }
 
 export default function PrepareForPrd() {
+  const { currentUser } = useUser()
   const [pageState, setPageState] = useState<PageState>('select')
   const [logLines, setLogLines] = useState<LogLine[]>([])
   const [dbEntries, setDbEntries] = useState<DbEntry[]>([])
@@ -130,7 +132,7 @@ export default function PrepareForPrd() {
       setPageState('done')
     }
 
-    await startPrepare(selections, handleLog, handleDone)
+    await startPrepare(selections, currentUser ?? 'unknown', handleLog, handleDone)
   }
 
   if (loading) {

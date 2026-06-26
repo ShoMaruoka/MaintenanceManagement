@@ -51,7 +51,7 @@ public class PrepareController : ControllerBase
     [HttpPost("stream")]
     public async Task StreamPrepare([FromBody] PrepareRequest request, CancellationToken ct)
     {
-        var executedBy = User.Identity?.Name ?? "unknown";
+        var executedBy = string.IsNullOrWhiteSpace(request.ExecutedBy) ? "unknown" : request.ExecutedBy;
 
         Response.Headers.ContentType = "text/event-stream";
         Response.Headers.CacheControl = "no-cache";

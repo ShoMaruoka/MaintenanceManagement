@@ -15,6 +15,7 @@ public class PrepareDbEntry
 
 public class PrepareRequest
 {
+    public string ExecutedBy { get; set; } = "";
     public List<PrepareSelection> Selections { get; set; } = [];
 }
 

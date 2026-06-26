@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { DbName, SelectedModule, LogLine, StepState } from '../types'
 import { startDeploy } from '../api/deploy'
+import { useUser } from '../context/UserContext'
 
 interface Props {
   dbName: DbName
@@ -20,6 +21,7 @@ const STEPS: { key: StepState['key']; label: string }[] = [
 const VALID_STEPS = new Set(['generate', 'git-update', 'merge', 'sql-convert', 'deploy', 'record'] as const)
 
 export default function LogViewer({ dbName, modules, onDone }: Props) {
+  const { currentUser } = useUser()
   const [lines, setLines] = useState<LogLine[]>([])
   const [stepStates, setStepStates] = useState<Map<StepState['key'], 'pending'|'running'|'done'>>(
     new Map(STEPS.map(s => [s.key, 'pending']))
@@ -57,7 +59,7 @@ export default function LogViewer({ dbName, modules, onDone }: Props) {
       onDoneRef.current()
     }
 
-    startDeploy(dbName, modules, handleLog, handleDone, undefined, ac.signal)
+    startDeploy(dbName, modules, currentUser ?? 'unknown', handleLog, handleDone, undefined, ac.signal)
 
     return () => {
       ac.abort()

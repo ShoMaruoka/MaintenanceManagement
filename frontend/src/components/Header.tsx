@@ -1,9 +1,13 @@
+import { useUser } from '../context/UserContext'
+
 interface Props {
   title: string
   path: string
 }
 
 export default function Header({ title, path }: Props) {
+  const { currentUser } = useUser()
+
   return (
     <header className="header">
       <div className="header-title">
@@ -16,7 +20,7 @@ export default function Header({ title, path }: Props) {
           STG 環境
         </div>
         <div className="header-divider" />
-        <span className="header-user">TANAKA\yamada</span>
+        <span className="header-user">{currentUser ?? '未選択'}</span>
       </div>
     </header>
   )

@@ -38,7 +38,7 @@ public class DeployController : ControllerBase
             return;
         }
 
-        var executedBy = User.Identity?.Name ?? "unknown";
+        var executedBy = string.IsNullOrWhiteSpace(request.ExecutedBy) ? "unknown" : request.ExecutedBy;
         var sessionId = _db.InsertDeploySession(request.DbName, executedBy);
 
         Response.Headers.ContentType = "text/event-stream";

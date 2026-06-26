@@ -16,6 +16,7 @@ export interface ApiDeployModule {
 
 export interface ApiDeployRequest {
   dbName: DbName
+  executedBy: string
   modules: ApiDeployModule[]
 }
 
@@ -33,6 +34,7 @@ function isDeployDone(event: any): event is ApiDeployDone {
 export function startDeploy(
   dbName: DbName,
   modules: SelectedModule[],
+  executedBy: string,
   onLog: (line: LogLine, step?: string) => void,
   onDone: (sessionId: number) => void,
   onError?: (error: Error) => void,
@@ -40,6 +42,7 @@ export function startDeploy(
 ): Promise<void> {
   const request: ApiDeployRequest = {
     dbName,
+    executedBy,
     modules: modules.map(m => ({
       name: m.name,
       type: m.type,
