@@ -1,23 +1,14 @@
 import { fetchJson } from './client'
-import type { DeploySession } from '../types'
+import type { DeploySession, DeploySessionDetail } from '../types'
 
-export interface ApiDeploySessionDetail {
-  detailId: number
-  sessionId: number
-  opType: string
-  moduleType: string
-  moduleName: string
-  result: string
-}
-
-export interface ApiDeploySession {
+interface ApiDeploySession {
   sessionId: number
   dbName: string
   executedBy: string
   executedAt: string
   status: string
   errorMessage?: string
-  details: ApiDeploySessionDetail[]
+  details: DeploySessionDetail[]
 }
 
 export async function getSessions(limit: number = 50): Promise<DeploySession[]> {
@@ -44,7 +35,7 @@ function formatExecutedAt(isoStr: string): string {
   }
 }
 
-function buildModuleSummary(details: ApiDeploySessionDetail[]): string {
+function buildModuleSummary(details: DeploySessionDetail[]): string {
   if (details.length === 0) return ''
 
   const typeCounts: Record<string, { 新規: number; 更新: number; 削除: number }> = {}
@@ -84,5 +75,6 @@ function formatSession(session: ApiDeploySession): DeploySession {
     status: session.status as any,
     modules: modules || `${moduleCount} モジュール`,
     moduleCount,
+    details: session.details,
   }
 }
