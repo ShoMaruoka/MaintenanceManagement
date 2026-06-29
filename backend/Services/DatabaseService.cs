@@ -178,7 +178,7 @@ public class DatabaseService
         cmd.CommandText = """
             SELECT ds.SessionId, ds.DbName, ds.ExecutedBy, ds.ExecutedAt, ds.Status, ds.ErrorMessage,
                    COUNT(dsd.DetailId) as ModuleCount,
-                   GROUP_CONCAT(dsd.OpType || ':' || dsd.ModuleType || ':' || dsd.ModuleName, '|') as ModuleSummary
+                   GROUP_CONCAT(dsd.OpType || ':' || dsd.ModuleType || ':' || dsd.ModuleName || ':' || dsd.Result, '|') as ModuleSummary
             FROM DeploySession ds
             LEFT JOIN DeploySessionDetail dsd ON ds.SessionId = dsd.SessionId
             GROUP BY ds.SessionId, ds.DbName, ds.ExecutedBy, ds.ExecutedAt, ds.Status, ds.ErrorMessage
@@ -214,17 +214,40 @@ public class DatabaseService
         return summary.Split('|')
             .Select(part =>
             {
-                var pieces = part.Split(':', 3);
+                var pieces = part.Split(':', 4);
                 return new DeploySessionDetail
                 {
                     SessionId  = sessionId,
                     OpType     = pieces.Length > 0 ? pieces[0] : "",
                     ModuleType = pieces.Length > 1 ? pieces[1] : "",
                     ModuleName = pieces.Length > 2 ? pieces[2] : "",
-                    Result     = "success",
+                    Result     = pieces.Length > 3 ? pieces[3] : "success",
                 };
             })
             .ToList();
+    }
+
+    public DeploySession? GetSessionById(long sessionId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT SessionId, DbName, ExecutedBy, ExecutedAt, Status, ErrorMessage
+            FROM DeploySession WHERE SessionId = $sessionId;
+            """;
+        cmd.Parameters.AddWithValue("$sessionId", sessionId);
+
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read()) return null;
+        return new DeploySession
+        {
+            SessionId    = reader.GetInt64(0),
+            DbName       = reader.GetString(1),
+            ExecutedBy   = reader.GetString(2),
+            ExecutedAt   = reader.GetString(3),
+            Status       = reader.GetString(4),
+            ErrorMessage = reader.IsDBNull(5) ? null : reader.GetString(5),
+        };
     }
 
     public List<DeploySessionDetail> GetSessionDetails(long sessionId)

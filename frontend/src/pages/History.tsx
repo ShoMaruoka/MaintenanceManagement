@@ -1,11 +1,8 @@
 import { useState, useEffect } from 'react'
 import StatusBadge from '../components/StatusBadge'
+import { SessionDetailTable } from '../components/SessionDetailTable'
 import { getSessions, getSession } from '../api/history'
 import type { DeploySession, DbName, SessionStatus } from '../types'
-
-interface SessionWithDetail extends DeploySession {
-  moduleDetail?: { name: string; op: string }[]
-}
 
 const DB_OPTIONS: (DbName | 'all')[] = ['all', 'kaios', 'gos', 'paf', 'duskin']
 const STATUS_OPTIONS: (SessionStatus | 'all')[] = ['all', 'success', 'failed', 'running']
@@ -18,12 +15,13 @@ const STATUS_LABELS: Record<SessionStatus | 'all', string> = {
 }
 
 export default function History() {
-  const [sessions, setSessions] = useState<SessionWithDetail[]>([])
+  const [sessions, setSessions] = useState<DeploySession[]>([])
   const [dbFilter, setDbFilter] = useState<DbName | 'all'>('all')
   const [statusFilter, setStatusFilter] = useState<SessionStatus | 'all'>('all')
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>('')
+  const [expandError, setExpandError] = useState<string>('')
 
   useEffect(() => {
     const loadSessions = async () => {
@@ -44,11 +42,13 @@ export default function History() {
   const handleExpandRow = async (sessionId: number) => {
     if (expandedId === sessionId) {
       setExpandedId(null)
+      setExpandError('')
       return
     }
 
     const existing = sessions.find(s => s.sessionId === sessionId)
-    if (existing?.moduleDetail) {
+    if (existing?.detailsFetched) {
+      setExpandError('')
       setExpandedId(sessionId)
       return
     }
@@ -56,20 +56,14 @@ export default function History() {
     try {
       const session = await getSession(sessionId)
       setSessions(prev =>
-        prev.map(s =>
-          s.sessionId === sessionId
-            ? {
-                ...s,
-                moduleDetail: session.moduleCount > 0
-                  ? [{ name: session.modules, op: '詳細' }]
-                  : undefined,
-              }
-            : s
-        )
+        prev.map(s => s.sessionId === sessionId ? { ...s, details: session.details, detailsFetched: true } : s)
       )
+      setExpandError('')
       setExpandedId(sessionId)
     } catch (err) {
       console.error('Failed to load session details:', err)
+      setExpandError('セッション詳細の取得に失敗しました')
+      setExpandedId(sessionId)
     }
   }
 
@@ -153,15 +147,18 @@ export default function History() {
             </div>
             {expandedId === s.sessionId && (
               <div className="log-session-detail">
-                <div className="log-detail-title">セッション詳細</div>
-                <div className="log-detail-modules">
-                  <div style={{ fontSize: 11, color: '#6b7280' }}>
-                    <strong>{s.moduleCount}</strong> モジュール実行
-                  </div>
-                  <div style={{ marginTop: 6, fontSize: 12, color: '#3a3f46' }}>
-                    {s.modules}
-                  </div>
+                <div className="log-detail-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  セッション詳細
+                  <span style={{ fontWeight: 400, color: '#9aa0a8' }}>{s.moduleCount} モジュール</span>
                 </div>
+                {expandError && (
+                  <div style={{ fontSize: 11, color: '#c5283d', marginTop: 6 }}>{expandError}</div>
+                )}
+                {!expandError && s.details && s.details.length > 0 ? (
+                  <SessionDetailTable details={s.details} />
+                ) : (
+                  !expandError && <div style={{ fontSize: 11, color: '#9aa0a8', marginTop: 6 }}>モジュールデータがありません</div>
+                )}
                 {s.status === 'failed' && (
                   <div style={{ marginTop: 8, padding: '8px 10px', background: '#fcebed', border: '1px solid #f3c0c5', borderRadius: 6, fontSize: 11, color: '#c5283d' }}>
                     エラーが発生しました。実行ログを確認してください。

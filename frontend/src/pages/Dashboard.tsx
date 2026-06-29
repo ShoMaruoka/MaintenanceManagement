@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import StatusBadge from '../components/StatusBadge'
+import { SessionDetailTable } from '../components/SessionDetailTable'
 import { getSessions } from '../api/history'
 import type { DeploySession } from '../types'
 
@@ -8,6 +9,7 @@ export default function Dashboard() {
   const [sessions, setSessions] = useState<DeploySession[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>('')
+  const [expandedId, setExpandedId] = useState<number | null>(null)
 
   useEffect(() => {
     getSessions(10)
@@ -17,6 +19,10 @@ export default function Dashboard() {
   }, [])
 
   const runningCount = sessions.filter(s => s.status === 'running').length
+
+  const handleExpandRow = (sessionId: number) => {
+    setExpandedId(prev => prev === sessionId ? null : sessionId)
+  }
 
   return (
     <div>
@@ -73,18 +79,39 @@ export default function Dashboard() {
           <div style={{ padding: '20px', color: '#8a9099' }}>実行履歴がありません</div>
         )}
         {sessions.map((s) => (
-          <div
-            key={s.sessionId}
-            className="table-row"
-            style={{ gridTemplateColumns: '140px 90px 1fr 100px 90px' }}
-          >
-            <div className="table-cell-mono">{s.executedAt}</div>
-            <div className="table-cell-db">{s.dbName}</div>
-            <div className="table-cell-module">{s.modules}</div>
-            <div className="table-cell-user">{s.executedBy}</div>
-            <div style={{ textAlign: 'right' }}>
-              <StatusBadge status={s.status as any} />
+          <div key={s.sessionId}>
+            <div
+              className="table-row"
+              style={{ gridTemplateColumns: '140px 90px 1fr 100px 90px', cursor: 'pointer' }}
+              onClick={() => handleExpandRow(s.sessionId)}
+            >
+              <div className="table-cell-mono">{s.executedAt}</div>
+              <div className="table-cell-db">{s.dbName}</div>
+              <div className="table-cell-module">{s.modules}</div>
+              <div className="table-cell-user">{s.executedBy}</div>
+              <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>
+                <StatusBadge status={s.status as any} />
+                <svg
+                  width="12" height="12" viewBox="0 0 12 12" fill="none"
+                  style={{ transform: expandedId === s.sessionId ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s', color: '#9aa0a8' }}
+                >
+                  <path d="M2 4l4 4 4-4" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                </svg>
+              </div>
             </div>
+            {expandedId === s.sessionId && (
+              <div className="log-session-detail">
+                <div className="log-detail-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  セッション詳細
+                  <span style={{ fontWeight: 400, color: '#9aa0a8' }}>{s.moduleCount} モジュール</span>
+                </div>
+                {s.details && s.details.length > 0 ? (
+                  <SessionDetailTable details={s.details} />
+                ) : (
+                  <div style={{ fontSize: 11, color: '#9aa0a8', marginTop: 6 }}>モジュールデータがありません</div>
+                )}
+              </div>
+            )}
           </div>
         ))}
       </div>

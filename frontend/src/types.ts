@@ -31,6 +31,15 @@ export interface SelectedModule {
   opType: OpType
 }
 
+export interface DeploySessionDetail {
+  detailId: number
+  sessionId: number
+  opType: OpType
+  moduleType: ModuleType
+  moduleName: string
+  result: string
+}
+
 export interface DeploySession {
   sessionId: number
   dbName: DbName
@@ -39,6 +48,8 @@ export interface DeploySession {
   status: SessionStatus
   modules: string
   moduleCount: number
+  details?: DeploySessionDetail[]
+  detailsFetched?: boolean
 }
 
 export interface LogLine {
