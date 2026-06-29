@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import StatusBadge from '../components/StatusBadge'
+import { SessionDetailTable } from '../components/SessionDetailTable'
 import { getSessions, getSession } from '../api/history'
 import type { DeploySession, DbName, SessionStatus } from '../types'
 
@@ -20,6 +21,7 @@ export default function History() {
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>('')
+  const [expandError, setExpandError] = useState<string>('')
 
   useEffect(() => {
     const loadSessions = async () => {
@@ -40,11 +42,13 @@ export default function History() {
   const handleExpandRow = async (sessionId: number) => {
     if (expandedId === sessionId) {
       setExpandedId(null)
+      setExpandError('')
       return
     }
 
     const existing = sessions.find(s => s.sessionId === sessionId)
-    if (existing?.details && existing.details.length > 0) {
+    if (existing?.detailsFetched) {
+      setExpandError('')
       setExpandedId(sessionId)
       return
     }
@@ -52,11 +56,14 @@ export default function History() {
     try {
       const session = await getSession(sessionId)
       setSessions(prev =>
-        prev.map(s => s.sessionId === sessionId ? { ...s, details: session.details } : s)
+        prev.map(s => s.sessionId === sessionId ? { ...s, details: session.details, detailsFetched: true } : s)
       )
+      setExpandError('')
       setExpandedId(sessionId)
     } catch (err) {
       console.error('Failed to load session details:', err)
+      setExpandError('セッション詳細の取得に失敗しました')
+      setExpandedId(sessionId)
     }
   }
 
@@ -144,51 +151,13 @@ export default function History() {
                   セッション詳細
                   <span style={{ fontWeight: 400, color: '#9aa0a8' }}>{s.moduleCount} モジュール</span>
                 </div>
-                {s.details && s.details.length > 0 ? (
-                  <table className="log-detail-table">
-                    <thead>
-                      <tr>
-                        <th>種別</th>
-                        <th>モジュール名</th>
-                        <th>区分</th>
-                        <th>結果</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {s.details.map((d, i) => (
-                        <tr key={d.detailId ?? i}>
-                          <td>
-                            <span className="log-detail-type-badge">
-                              {d.moduleType === 'StoredProcedure' ? 'SP'
-                                : d.moduleType === 'Function' ? 'Func'
-                                : d.moduleType}
-                            </span>
-                          </td>
-                          <td className="log-detail-module-name-cell">{d.moduleName}</td>
-                          <td>
-                            <span className={`log-detail-op-badge ${
-                              d.opType === '新規' ? 'log-detail-op-new'
-                              : d.opType === '更新' ? 'log-detail-op-update'
-                              : 'log-detail-op-delete'
-                            }`}>{d.opType}</span>
-                          </td>
-                          <td>
-                            <span className={
-                              d.result === 'success' ? 'log-detail-result-success'
-                              : d.result === 'failed' ? 'log-detail-result-failed'
-                              : 'log-detail-result-skipped'
-                            }>
-                              {d.result === 'success' ? '成功'
-                                : d.result === 'failed' ? '失敗'
-                                : 'スキップ'}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                {expandError && (
+                  <div style={{ fontSize: 11, color: '#c5283d', marginTop: 6 }}>{expandError}</div>
+                )}
+                {!expandError && s.details && s.details.length > 0 ? (
+                  <SessionDetailTable details={s.details} />
                 ) : (
-                  <div style={{ fontSize: 11, color: '#9aa0a8', marginTop: 6 }}>モジュールデータがありません</div>
+                  !expandError && <div style={{ fontSize: 11, color: '#9aa0a8', marginTop: 6 }}>モジュールデータがありません</div>
                 )}
                 {s.status === 'failed' && (
                   <div style={{ marginTop: 8, padding: '8px 10px', background: '#fcebed', border: '1px solid #f3c0c5', borderRadius: 6, fontSize: 11, color: '#c5283d' }}>

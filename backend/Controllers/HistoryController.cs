@@ -18,6 +18,7 @@ public class HistoryController : ControllerBase
     [HttpGet("sessions")]
     public IActionResult GetSessions([FromQuery] int limit = 50)
     {
+        limit = Math.Clamp(limit, 1, 500);
         var sessions = _db.GetRecentSessions(limit);
         return Ok(sessions);
     }
@@ -25,8 +26,7 @@ public class HistoryController : ControllerBase
     [HttpGet("sessions/{sessionId:long}")]
     public IActionResult GetSession(long sessionId)
     {
-        var sessions = _db.GetRecentSessions(1000);
-        var session = sessions.FirstOrDefault(s => s.SessionId == sessionId);
+        var session = _db.GetSessionById(sessionId);
         if (session is null) return NotFound();
 
         session.Details = _db.GetSessionDetails(sessionId);
