@@ -69,7 +69,7 @@ export default function DeployStg() {
   function updateDbSelection(db: DbName, updater: (m: Map<string, OpType>) => Map<string, OpType>) {
     setSelectedModulesByDb(prev => {
       const next = new Map(prev)
-      next.set(db, updater(new Map(prev.get(db) ?? [])))
+      next.set(db, updater(new Map(prev.get(db))))
       return next
     })
   }
@@ -116,7 +116,7 @@ export default function DeployStg() {
       const found = allModules.find(m => m.name === name)
       return { name, opType, type: found?.type ?? 'StoredProcedure' }
     }),
-    [selectedModulesByDb, modulesByDb, selectedDb],
+    [selectedModules, modulesByDb, selectedDb],
   )
 
   const handleDone = useCallback(() => setPageState('done'), [])
