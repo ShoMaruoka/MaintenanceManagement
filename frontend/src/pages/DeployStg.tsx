@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react'
 import type { DbName, Module, ModuleType, OpType, SelectedModule } from '../types'
 import ConfirmDialog from '../components/ConfirmDialog'
 import LogViewer from '../components/LogViewer'
+import SelectionSummary from '../components/SelectionSummary'
 import { getDbList, getModules } from '../api/modules'
 import type { DbListItem } from '../api/modules'
 
@@ -22,7 +23,7 @@ export default function DeployStg() {
   const [dbConfigs, setDbConfigs] = useState<DbListItem[]>([])
   const [selectedDb, setSelectedDb] = useState<DbName>('kaios')
   const [activeType, setActiveType] = useState<ModuleType>('StoredProcedure')
-  const [selectedModules, setSelectedModules] = useState<Map<string, OpType>>(new Map())
+  const [selectedModulesByDb, setSelectedModulesByDb] = useState<Map<DbName, Map<string, OpType>>>(new Map())
   const [search, setSearch] = useState('')
   const [pageState, setPageState] = useState<PageState>('select')
   const [modulesByDb, setModulesByDb] = useState<Record<DbName, Record<ModuleType, Module[]>>>({
@@ -55,6 +56,8 @@ export default function DeployStg() {
     loadModules()
   }, [selectedDb])
 
+  const selectedModules = selectedModulesByDb.get(selectedDb) ?? new Map<string, OpType>()
+
   const currentModules = modulesByDb[selectedDb]?.[activeType] ?? []
   const filteredModules = useMemo(
     () => currentModules.filter(m => m.name.toLowerCase().includes(search.toLowerCase())),
@@ -63,30 +66,44 @@ export default function DeployStg() {
 
   const totalSelected = selectedModules.size
 
+  function updateDbSelection(db: DbName, updater: (m: Map<string, OpType>) => Map<string, OpType>) {
+    setSelectedModulesByDb(prev => {
+      const next = new Map(prev)
+      next.set(db, updater(new Map(prev.get(db))))
+      return next
+    })
+  }
+
   function toggleModule(module: Module) {
-    const next = new Map(selectedModules)
-    if (next.has(module.name)) {
-      next.delete(module.name)
-    } else {
-      next.set(module.name, '更新')
-    }
-    setSelectedModules(next)
+    updateDbSelection(selectedDb, m => {
+      if (m.has(module.name)) m.delete(module.name)
+      else m.set(module.name, '更新')
+      return m
+    })
   }
 
   function setOpType(name: string, op: OpType) {
-    const next = new Map(selectedModules)
-    next.set(name, op)
-    setSelectedModules(next)
+    updateDbSelection(selectedDb, m => { m.set(name, op); return m })
   }
 
   function selectAll() {
-    const next = new Map(selectedModules)
-    filteredModules.forEach(m => { if (!next.has(m.name)) next.set(m.name, '更新') })
-    setSelectedModules(next)
+    updateDbSelection(selectedDb, m => {
+      filteredModules.forEach(mod => { if (!m.has(mod.name)) m.set(mod.name, '更新') })
+      return m
+    })
   }
 
   function clearAll() {
-    setSelectedModules(new Map())
+    updateDbSelection(selectedDb, () => new Map())
+  }
+
+  function removeModule(db: DbName, name: string) {
+    updateDbSelection(db, m => { m.delete(name); return m })
+  }
+
+  function moduleTypeOf(db: DbName, name: string): ModuleType {
+    const allModules = Object.values(modulesByDb[db] ?? {}).flat()
+    return allModules.find(m => m.name === name)?.type ?? 'StoredProcedure'
   }
 
   const selectedInCurrentType = filteredModules.filter(m => selectedModules.has(m.name))
@@ -114,7 +131,7 @@ export default function DeployStg() {
         />
         {pageState === 'done' && (
           <div style={{ padding: '12px 0 0' }}>
-            <button className="btn-secondary" onClick={() => { setSelectedModules(new Map()); setPageState('select') }}>
+            <button className="btn-secondary" onClick={() => { updateDbSelection(selectedDb, () => new Map()); setPageState('select') }}>
               ← 適用画面に戻る
             </button>
           </div>
@@ -133,7 +150,7 @@ export default function DeployStg() {
             <div
               key={db.name}
               className={`db-item${selectedDb === db.name ? ' selected' : ''}`}
-              onClick={() => { setSelectedDb(db.name); setSelectedModules(new Map()); setSearch('') }}
+              onClick={() => { setSelectedDb(db.name); setSearch('') }}
             >
               <span className="db-item-radio">
                 {selectedDb === db.name && <span className="db-item-radio-inner" />}
@@ -151,6 +168,11 @@ export default function DeployStg() {
             {selectedDb}_dev <span style={{ color: '#c4c9d1' }}>→</span> <span>STG</span>
           </div>
         </div>
+        <SelectionSummary
+          selectedModulesByDb={selectedModulesByDb}
+          moduleTypeOf={moduleTypeOf}
+          onRemove={removeModule}
+        />
         <div className="db-selector-note">複数 DB は順次実行されます。並列実行は行いません。</div>
       </div>
 
