@@ -970,10 +970,13 @@ input {
 
 .dialog {
   width: 472px;
+  max-height: 85vh;
   background: #fff;
   border-radius: 11px;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .dialog-header {
@@ -982,6 +985,7 @@ input {
   display: flex;
   align-items: center;
   gap: 10px;
+  flex: none;
 }
 
 .dialog-icon {
@@ -1008,6 +1012,9 @@ input {
 
 .dialog-body {
   padding: 18px 22px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .dialog-meta {
@@ -1121,6 +1128,7 @@ input {
   padding: 14px 22px;
   border-top: 1px solid #eef0f2;
   background: #fafbfc;
+  flex: none;
 }
 
 /* ---- Log Viewer ---- */

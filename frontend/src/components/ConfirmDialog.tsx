@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { DbName, SelectedModule } from '../types'
+import { useUser } from '../context/UserContext'
 
 interface Props {
   dbName: DbName
@@ -16,6 +17,7 @@ const OP_LABEL_CLASS: Record<string, string> = {
 
 export default function ConfirmDialog({ dbName, modules, onConfirm, onCancel }: Props) {
   const [checked, setChecked] = useState(false)
+  const { currentUser } = useUser()
 
   return (
     <div className="dialog-overlay" onClick={onCancel}>
@@ -45,7 +47,7 @@ export default function ConfirmDialog({ dbName, modules, onConfirm, onCancel }: 
             <div className="dialog-meta-item">
               <label>実行者</label>
               <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, fontWeight: 500 }}>
-                TANAKA\yamada
+                {currentUser ?? '-'}
               </div>
             </div>
           </div>
