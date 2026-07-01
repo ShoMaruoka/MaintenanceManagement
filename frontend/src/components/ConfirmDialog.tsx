@@ -1,8 +1,10 @@
 import { useState } from 'react'
-import type { MultiDbModules } from '../types'
+import type { DbName, SelectedModule } from '../types'
+import { useUser } from '../context/UserContext'
 
 interface Props {
-  allModules: MultiDbModules
+  dbName: DbName
+  modules: SelectedModule[]
   onConfirm: () => void
   onCancel: () => void
 }
@@ -13,12 +15,9 @@ const OP_LABEL_CLASS: Record<string, string> = {
   '削除': 'op-badge op-badge-delete',
 }
 
-export default function ConfirmDialog({ allModules, onConfirm, onCancel }: Props) {
+export default function ConfirmDialog({ dbName, modules, onConfirm, onCancel }: Props) {
   const [checked, setChecked] = useState(false)
-
-  const dbCount = allModules.length
-  const totalCount = allModules.reduce((sum, { modules }) => sum + modules.length, 0)
-  const dbNames = allModules.map(({ db }) => db).join(', ')
+  const { currentUser } = useUser()
 
   return (
     <div className="dialog-overlay" onClick={onCancel}>
@@ -41,40 +40,33 @@ export default function ConfirmDialog({ allModules, onConfirm, onCancel }: Props
             <div className="dialog-meta-item">
               <label>対象 DB</label>
               <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, fontWeight: 600 }}>
-                {dbNames}{' '}
-                <span style={{ color: '#c4c9d1', fontWeight: 400 }}>({dbCount} DB)</span>
+                {dbName}{' '}
+                <span style={{ color: '#c4c9d1', fontWeight: 400 }}>({dbName}_dev → STG)</span>
               </div>
             </div>
             <div className="dialog-meta-item">
               <label>実行者</label>
               <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, fontWeight: 500 }}>
-                TANAKA\yamada
+                {currentUser ?? '-'}
               </div>
             </div>
           </div>
 
           <div className="dialog-module-count">
-            適用モジュール <strong>{totalCount} 件</strong>（{dbCount} DB）
+            適用モジュール <strong>{modules.length} 件</strong>
           </div>
 
           <div className="dialog-module-list">
-            {allModules.map(({ db, modules }) => (
-              <div key={db}>
-                <div style={{ padding: '6px 8px', fontSize: 11, fontWeight: 700, color: '#5a6272', background: '#f4f5f7', borderRadius: 4, marginBottom: 2, marginTop: 4 }}>
-                  ▼ {db}（{modules.length}件）
-                </div>
-                {modules.map((m, i) => (
-                  <div key={i} className="dialog-module-item">
-                    <span className={OP_LABEL_CLASS[m.opType] ?? 'op-badge'} style={{ padding: '1px 7px', fontSize: 10 }}>
-                      {m.opType}
-                    </span>
-                    <span className="dialog-module-name">{m.name}</span>
-                    {(m.type === 'Table' || m.type === 'UserDefinedTableType')
-                      ? <span className="dialog-module-git-only">Git のみ</span>
-                      : <span className="dialog-module-type">{m.type}</span>
-                    }
-                  </div>
-                ))}
+            {modules.map((m, i) => (
+              <div key={i} className="dialog-module-item">
+                <span className={OP_LABEL_CLASS[m.opType] ?? 'op-badge'} style={{ padding: '1px 7px', fontSize: 10 }}>
+                  {m.opType}
+                </span>
+                <span className="dialog-module-name">{m.name}</span>
+                {(m.type === 'Table' || m.type === 'UserDefinedTableType')
+                  ? <span className="dialog-module-git-only">Git のみ</span>
+                  : <span className="dialog-module-type">{m.type}</span>
+                }
               </div>
             ))}
           </div>
@@ -84,7 +76,6 @@ export default function ConfirmDialog({ allModules, onConfirm, onCancel }: Props
             <div className="dialog-warning-text">
               git Live Updates → merge → SQL 変換 → deploy.bat の順で実行されます。
               Table・UserDefinedTableType は Git マージのみ。
-              複数 DB は順次実行されます。
             </div>
           </div>
 
