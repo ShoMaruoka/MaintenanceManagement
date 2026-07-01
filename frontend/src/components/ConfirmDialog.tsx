@@ -1,10 +1,9 @@
 import { useState } from 'react'
-import type { DbName, SelectedModule } from '../types'
+import type { MultiDbModules } from '../types'
 import { useUser } from '../context/UserContext'
 
 interface Props {
-  dbName: DbName
-  modules: SelectedModule[]
+  allModules: MultiDbModules
   onConfirm: () => void
   onCancel: () => void
 }
@@ -15,9 +14,10 @@ const OP_LABEL_CLASS: Record<string, string> = {
   '削除': 'op-badge op-badge-delete',
 }
 
-export default function ConfirmDialog({ dbName, modules, onConfirm, onCancel }: Props) {
+export default function ConfirmDialog({ allModules, onConfirm, onCancel }: Props) {
   const [checked, setChecked] = useState(false)
   const { currentUser } = useUser()
+  const totalCount = allModules.reduce((sum, { modules }) => sum + modules.length, 0)
 
   return (
     <div className="dialog-overlay" onClick={onCancel}>
@@ -40,8 +40,7 @@ export default function ConfirmDialog({ dbName, modules, onConfirm, onCancel }: 
             <div className="dialog-meta-item">
               <label>対象 DB</label>
               <div style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 13, fontWeight: 600 }}>
-                {dbName}{' '}
-                <span style={{ color: '#c4c9d1', fontWeight: 400 }}>({dbName}_dev → STG)</span>
+                {allModules.map(({ db }) => db).join(', ')}
               </div>
             </div>
             <div className="dialog-meta-item">
@@ -53,23 +52,30 @@ export default function ConfirmDialog({ dbName, modules, onConfirm, onCancel }: 
           </div>
 
           <div className="dialog-module-count">
-            適用モジュール <strong>{modules.length} 件</strong>
+            適用モジュール <strong>{totalCount} 件</strong>
           </div>
 
-          <div className="dialog-module-list">
-            {modules.map((m, i) => (
-              <div key={i} className="dialog-module-item">
-                <span className={OP_LABEL_CLASS[m.opType] ?? 'op-badge'} style={{ padding: '1px 7px', fontSize: 10 }}>
-                  {m.opType}
-                </span>
-                <span className="dialog-module-name">{m.name}</span>
-                {(m.type === 'Table' || m.type === 'UserDefinedTableType')
-                  ? <span className="dialog-module-git-only">Git のみ</span>
-                  : <span className="dialog-module-type">{m.type}</span>
-                }
+          {allModules.map(({ db, modules }) => (
+            <div key={db}>
+              <div className="dialog-module-count" style={{ fontSize: 12, fontWeight: 600 }}>
+                {db}（{db}_dev → STG） <strong>{modules.length} 件</strong>
               </div>
-            ))}
-          </div>
+              <div className="dialog-module-list">
+                {modules.map((m, i) => (
+                  <div key={i} className="dialog-module-item">
+                    <span className={OP_LABEL_CLASS[m.opType] ?? 'op-badge'} style={{ padding: '1px 7px', fontSize: 10 }}>
+                      {m.opType}
+                    </span>
+                    <span className="dialog-module-name">{m.name}</span>
+                    {(m.type === 'Table' || m.type === 'UserDefinedTableType')
+                      ? <span className="dialog-module-git-only">Git のみ</span>
+                      : <span className="dialog-module-type">{m.type}</span>
+                    }
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
 
           <div className="dialog-warning">
             <span className="dialog-warning-dot">●</span>
