@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback } from 'react'
-import type { DbName, Module, ModuleType, OpType, SelectedModule } from '../types'
+import type { DbName, Module, ModuleType, OpType, MultiDbModules } from '../types'
 import ConfirmDialog from '../components/ConfirmDialog'
 import LogViewer from '../components/LogViewer'
 import SelectionSummary from '../components/SelectionSummary'
@@ -64,7 +64,14 @@ export default function DeployStg() {
     [currentModules, search],
   )
 
-  const totalSelected = selectedModules.size
+  // 全DBの選択件数合計
+  const totalSelected = useMemo(
+    () => Array.from(selectedModulesByDb.values()).reduce((sum, m) => sum + m.size, 0),
+    [selectedModulesByDb],
+  )
+
+  // 現在のDBの選択件数（種別タブや操作区分カウント用）
+  const currentDbSelected = selectedModules.size
 
   function updateDbSelection(db: DbName, updater: (m: Map<string, OpType>) => Map<string, OpType>) {
     setSelectedModulesByDb(prev => {
@@ -108,15 +115,27 @@ export default function DeployStg() {
 
   const selectedInCurrentType = filteredModules.filter(m => selectedModules.has(m.name))
   const opsCount = { '新規': 0, '更新': 0, '削除': 0 }
-  selectedModules.forEach(op => { opsCount[op] = (opsCount[op] ?? 0) + 1 })
+  // 全DBの操作区分合計
+  selectedModulesByDb.forEach(map => {
+    map.forEach(op => { opsCount[op] = (opsCount[op] ?? 0) + 1 })
+  })
 
-  const confirmModules = useMemo((): SelectedModule[] =>
-    Array.from(selectedModules.entries()).map(([name, opType]) => {
-      const allModules = Object.values(modulesByDb[selectedDb] ?? {}).flat()
-      const found = allModules.find(m => m.name === name)
-      return { name, opType, type: found?.type ?? 'StoredProcedure' }
-    }),
-    [selectedModules, modulesByDb, selectedDb],
+  // 全DBの選択モジュールをまとめた配列（dbConfigs 順）
+  const allConfirmModules = useMemo((): MultiDbModules =>
+    dbConfigs
+      .filter(db => (selectedModulesByDb.get(db.name)?.size ?? 0) > 0)
+      .map(db => {
+        const selMap = selectedModulesByDb.get(db.name) ?? new Map()
+        const allMods = Object.values(modulesByDb[db.name] ?? {}).flat()
+        return {
+          db: db.name,
+          modules: Array.from(selMap.entries()).map(([name, opType]) => {
+            const found = allMods.find(m => m.name === name)
+            return { name, opType, type: found?.type ?? 'StoredProcedure' as ModuleType }
+          }),
+        }
+      }),
+    [dbConfigs, selectedModulesByDb, modulesByDb],
   )
 
   const handleDone = useCallback(() => setPageState('done'), [])
@@ -125,13 +144,16 @@ export default function DeployStg() {
     return (
       <div style={{ height: 'calc(100vh - 52px - 40px)', display: 'flex', flexDirection: 'column' }}>
         <LogViewer
-          dbName={selectedDb}
-          modules={confirmModules}
+          allModules={allConfirmModules}
           onDone={handleDone}
         />
         {pageState === 'done' && (
           <div style={{ padding: '12px 0 0' }}>
-            <button className="btn-secondary" onClick={() => { updateDbSelection(selectedDb, () => new Map()); setPageState('select') }}>
+            <button className="btn-secondary" onClick={() => {
+              // 実行した全DBの選択をクリア
+              allConfirmModules.forEach(({ db }) => updateDbSelection(db, () => new Map()))
+              setPageState('select')
+            }}>
               ← 適用画面に戻る
             </button>
           </div>
@@ -183,8 +205,8 @@ export default function DeployStg() {
             <span className="module-tree-title-text">モジュールツリー</span>
             <span className="module-tree-db-label">{selectedDb}_dev</span>
           </div>
-          {totalSelected > 0 && (
-            <span className="module-tree-selected-count">{totalSelected} 件選択中</span>
+          {currentDbSelected > 0 && (
+            <span className="module-tree-selected-count">{currentDbSelected} 件選択中</span>
           )}
         </div>
 
@@ -210,7 +232,7 @@ export default function DeployStg() {
               )
             })}
             <div className="module-cat-footer">
-              合計 <strong>{totalSelected}</strong> モジュール選択中
+              合計 <strong>{currentDbSelected}</strong> モジュール選択中
             </div>
           </div>
 
@@ -318,7 +340,7 @@ export default function DeployStg() {
             )}
           </div>
           <div className="deploy-footer-actions">
-            {totalSelected > 0 && (
+            {currentDbSelected > 0 && (
               <button className="btn-ghost" onClick={clearAll}>選択をクリア</button>
             )}
             <button
@@ -338,8 +360,7 @@ export default function DeployStg() {
       {/* Confirm Dialog */}
       {pageState === 'confirm' && (
         <ConfirmDialog
-          dbName={selectedDb}
-          modules={confirmModules}
+          allModules={allConfirmModules}
           onConfirm={() => setPageState('log')}
           onCancel={() => setPageState('select')}
         />

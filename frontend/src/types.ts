@@ -71,3 +71,5 @@ export interface ProductionFile {
   sqlServerFiles: string[]
   mariaDbFiles: string[]
 }
+
+export type MultiDbModules = { db: DbName; modules: SelectedModule[] }[]

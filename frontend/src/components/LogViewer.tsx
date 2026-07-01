@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import type { DbName, SelectedModule, LogLine, StepState } from '../types'
+import type { LogLine, StepState, MultiDbModules } from '../types'
 import { startDeploy } from '../api/deploy'
 import { useUser } from '../context/UserContext'
 
 interface Props {
-  dbName: DbName
-  modules: SelectedModule[]
+  allModules: MultiDbModules
   onDone: () => void
 }
 
@@ -20,50 +19,95 @@ const STEPS: { key: StepState['key']; label: string }[] = [
 
 const VALID_STEPS = new Set(['generate', 'git-update', 'merge', 'sql-convert', 'deploy', 'record'] as const)
 
-export default function LogViewer({ dbName, modules, onDone }: Props) {
+const INITIAL_STEP_STATES = () =>
+  new Map(STEPS.map(s => [s.key, 'pending' as const]))
+
+export default function LogViewer({ allModules, onDone }: Props) {
   const { currentUser } = useUser()
   const [lines, setLines] = useState<LogLine[]>([])
-  const [stepStates, setStepStates] = useState<Map<StepState['key'], 'pending'|'running'|'done'>>(
-    new Map(STEPS.map(s => [s.key, 'pending']))
-  )
+  const [stepStates, setStepStates] = useState<Map<StepState['key'], 'pending'|'running'|'done'>>(INITIAL_STEP_STATES())
   const [currentStep, setCurrentStep] = useState<StepState['key']>('generate')
+  const [currentDbLabel, setCurrentDbLabel] = useState<string>('')
   const [isRunning, setIsRunning] = useState(true)
   const logRef = useRef<HTMLDivElement>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
-  // ref で最新の onDone を保持することで deps から除外し、StrictMode 2重実行を防ぐ
   const onDoneRef = useRef(onDone)
+  const startedRef = useRef(false)
   onDoneRef.current = onDone
 
-  // デプロイはマウント時に1回だけ実行する（deps [] = StrictMode の2重呼び出しを防止）
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
+    // StrictMode は useEffect を2回実行するが ref でガードして1回だけ実行する
+    // cleanup で abort しないのは、中断で InsertDeploySession が "running" のまま残るのを防ぐため
+    if (startedRef.current) return
+    startedRef.current = true
+
     const ac = new AbortController()
     abortControllerRef.current = ac
 
-    const handleLog = (line: LogLine, stepKey?: string) => {
-      setLines(prev => [...prev, line])
-      if (stepKey && VALID_STEPS.has(stepKey as StepState['key'])) {
-        const step = stepKey as StepState['key']
-        setStepStates(prev => {
-          const next = new Map(prev)
-          next.set(step, 'done')
-          return next
-        })
-        const nextIdx = STEPS.findIndex(s => s.key === step) + 1
-        if (nextIdx < STEPS.length) setCurrentStep(STEPS[nextIdx].key)
-      }
-    }
+    const addLine = (line: LogLine) => setLines(prev => [...prev, line])
 
-    const handleDone = () => {
+    const runAll = async () => {
+      const total = allModules.length
+
+      for (let i = 0; i < allModules.length; i++) {
+        if (ac.signal.aborted) break
+
+        const { db, modules } = allModules[i]
+        setCurrentDbLabel(`${db}（${i + 1}/${total}）`)
+
+        // DBヘッダーをログに追加
+        addLine({
+          timestamp: new Date().toLocaleTimeString('ja-JP', { hour12: false }),
+          level: 'STEP',
+          message: `=== ${db} 適用開始（${i + 1}/${total}） ===`,
+        })
+
+        // ステップをリセット
+        setStepStates(INITIAL_STEP_STATES())
+        setCurrentStep('generate')
+
+        await new Promise<void>(resolve => {
+          startDeploy(
+            db,
+            modules,
+            currentUser ?? 'unknown',
+            (line: LogLine, stepKey?: string) => {
+              addLine(line)
+              if (stepKey && VALID_STEPS.has(stepKey as StepState['key'])) {
+                const step = stepKey as StepState['key']
+                setStepStates(prev => {
+                  const next = new Map(prev)
+                  next.set(step, 'done')
+                  return next
+                })
+                const nextIdx = STEPS.findIndex(s => s.key === step) + 1
+                if (nextIdx < STEPS.length) setCurrentStep(STEPS[nextIdx].key)
+              }
+            },
+            (_sessionId: number) => resolve(),  // onDone: 完了（成功・失敗問わず）
+            () => resolve(),                   // onError: エラーでも次のDBへ継続
+            ac.signal,
+          )
+        })
+
+        if (ac.signal.aborted) break
+
+        addLine({
+          timestamp: new Date().toLocaleTimeString('ja-JP', { hour12: false }),
+          level: 'OK',
+          message: `=== ${db} 適用完了（${i + 1}/${total}） ===`,
+        })
+      }
+
       setIsRunning(false)
       onDoneRef.current()
     }
 
-    startDeploy(dbName, modules, currentUser ?? 'unknown', handleLog, handleDone, undefined, ac.signal)
+    runAll()
 
-    return () => {
-      ac.abort()
-    }
+    // cleanup では abort しない（StrictMode の2回目マウントで中断が起きるのを防ぐ）
+    // ユーザーによる中断は abort() ボタン経由で abortControllerRef を使う
   }, [])
 
   useEffect(() => {
@@ -106,7 +150,9 @@ export default function LogViewer({ dbName, modules, onDone }: Props) {
       <div className="header" style={{ borderBottom: '1px solid #e4e6ea', padding: '0 22px' }}>
         <div className="header-title">
           <span className="header-title-text">STG 適用</span>
-          <span className="header-title-path">/ deploy</span>
+          {currentDbLabel && (
+            <span className="header-title-path">/ {currentDbLabel}</span>
+          )}
         </div>
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 11px', borderRadius: 6, background: isRunning ? '#fbf1dd' : '#e6f4ec', color: isRunning ? '#b25e09' : '#137a4c', fontSize: 12, fontWeight: 600 }}>
           <span style={{ width: 7, height: 7, borderRadius: '50%', background: isRunning ? '#d98a2b' : '#22a06b', display: 'inline-block' }} />
