@@ -2,8 +2,12 @@ import { useState, useMemo, useEffect } from 'react'
 import type { DbName, LogLine } from '../types'
 import { getPrepareFiles, startPrepare, type ApiPrepareSelection } from '../api/prepare'
 import { useUser } from '../context/UserContext'
+import PrepareCompareView from '../components/PrepareCompareView'
 
 type PageState = 'select' | 'confirm' | 'running' | 'done'
+type ViewMode = 'cards' | 'compare'
+
+const DB_ORDER: DbName[] = ['kaios', 'gos', 'paf', 'duskin']
 
 interface PrepareFile {
   fileName: string
@@ -23,6 +27,7 @@ function fileKey(dbName: DbName, file: PrepareFile) {
 export default function PrepareForPrd() {
   const { currentUser } = useUser()
   const [pageState, setPageState] = useState<PageState>('select')
+  const [viewMode, setViewMode] = useState<ViewMode>('cards')
   const [logLines, setLogLines] = useState<LogLine[]>([])
   const [dbEntries, setDbEntries] = useState<DbEntry[]>([])
   const [loading, setLoading] = useState(true)
@@ -203,6 +208,16 @@ export default function PrepareForPrd() {
         へ移動して次回まで保留されます。
       </div>
 
+      <button
+        className="btn-secondary prep-compare-toggle-btn"
+        onClick={() => setViewMode(prev => (prev === 'cards' ? 'compare' : 'cards'))}
+      >
+        {viewMode === 'compare' ? '← 一覧に戻る' : '比較する'}
+      </button>
+
+      {viewMode === 'compare' ? (
+        <PrepareCompareView dbEntries={dbEntries} checked={checked} dbOrder={DB_ORDER} />
+      ) : (
       <div className="prep-grid">
         {dbEntries.map(db => {
           const deployedFiles = db.files.filter(f => f.source === 'deployed')
@@ -308,6 +323,7 @@ export default function PrepareForPrd() {
           )
         })}
       </div>
+      )}
 
       <div className="prep-action-area">
         <div className="prep-action-desc">
