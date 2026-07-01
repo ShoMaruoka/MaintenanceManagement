@@ -1531,6 +1531,10 @@ input {
   margin-bottom: 8px;
 }
 
+.prep-compare-table-wrap {
+  overflow-x: auto;
+}
+
 .prep-compare-table {
   width: 100%;
   border-collapse: collapse;

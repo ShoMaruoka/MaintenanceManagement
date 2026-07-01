@@ -67,51 +67,53 @@ export default function PrepareCompareView({ dbEntries, checked, dbOrder }: Prep
       {sections.map(section => (
         <div key={section.label} className="prep-compare-section">
           <div className="prep-compare-section-title">{section.label}</div>
-          <table className="prep-compare-table">
-            <thead>
-              <tr>
-                <th>ファイル名</th>
-                {dbOrder.map(db => (
-                  <th key={db}>{db}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {section.rows.length === 0 ? (
+          <div className="prep-compare-table-wrap">
+            <table className="prep-compare-table">
+              <thead>
                 <tr>
-                  <td className="prep-compare-empty" colSpan={dbOrder.length + 1}>
-                    対象ファイルなし
-                  </td>
+                  <th>ファイル名</th>
+                  {dbOrder.map(db => (
+                    <th key={db}>{db}</th>
+                  ))}
                 </tr>
-              ) : (
-                section.rows.map(row => (
-                  <tr
-                    key={`${row.dbType}::${row.fileName}`}
-                    className={row.isCommon ? '' : 'prep-compare-row-unique'}
-                  >
-                    <td className="prep-compare-filename">
-                      {row.fileName}
-                      <span className="prep-file-db-badge">{row.dbType === 'mariadb' ? 'MariaDB' : 'SS'}</span>
+              </thead>
+              <tbody>
+                {section.rows.length === 0 ? (
+                  <tr>
+                    <td className="prep-compare-empty" colSpan={dbOrder.length + 1}>
+                      対象ファイルなし
                     </td>
-                    {dbOrder.map(db => {
-                      const cell = row.cells[db]
-                      if (!cell?.exists) {
-                        return <td key={db} className="prep-compare-cell prep-compare-cell-empty" />
-                      }
-                      const isPending = section.source === 'hold' && cell.checked
-                      return (
-                        <td key={db} className="prep-compare-cell">
-                          <span className={isPending ? 'prep-compare-mark-pending' : 'prep-compare-mark'}>
-                            {isPending ? '○(適用予定)' : '○'}
-                          </span>
-                        </td>
-                      )
-                    })}
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ) : (
+                  section.rows.map(row => (
+                    <tr
+                      key={`${row.dbType}::${row.fileName}`}
+                      className={row.isCommon ? '' : 'prep-compare-row-unique'}
+                    >
+                      <td className="prep-compare-filename">
+                        {row.fileName}
+                        <span className="prep-file-db-badge">{row.dbType === 'mariadb' ? 'MariaDB' : 'SS'}</span>
+                      </td>
+                      {dbOrder.map(db => {
+                        const cell = row.cells[db]
+                        if (!cell?.exists) {
+                          return <td key={db} className="prep-compare-cell prep-compare-cell-empty" />
+                        }
+                        const isPending = section.source === 'hold' && cell.checked
+                        return (
+                          <td key={db} className="prep-compare-cell">
+                            <span className={isPending ? 'prep-compare-mark-pending' : 'prep-compare-mark'}>
+                              {isPending ? '○(適用予定)' : '○'}
+                            </span>
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       ))}
     </div>
