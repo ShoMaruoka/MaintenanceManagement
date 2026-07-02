@@ -93,6 +93,13 @@ export default function DeployStg() {
     updateDbSelection(selectedDb, m => { m.set(name, op); return m })
   }
 
+  function setOpTypeBulk(names: string[], op: OpType) {
+    updateDbSelection(selectedDb, m => {
+      names.forEach(name => { if (m.has(name)) m.set(name, op) })
+      return m
+    })
+  }
+
   function selectAll() {
     updateDbSelection(selectedDb, m => {
       filteredModules.forEach(mod => { if (!m.has(mod.name)) m.set(mod.name, '更新') })
@@ -250,6 +257,25 @@ export default function DeployStg() {
                   onChange={e => setSearch(e.target.value)}
                 />
               </div>
+              {selectedInCurrentType.length > 0 && (
+                <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: '#5a6472' }}>
+                  操作区分を一括変更
+                  <select
+                    value=""
+                    onChange={e => {
+                      const op = e.target.value as OpType
+                      if (!op) return
+                      setOpTypeBulk(selectedInCurrentType.map(m => m.name), op)
+                    }}
+                    style={{ fontSize: 12, padding: '2px 4px' }}
+                  >
+                    <option value="" disabled>選択...</option>
+                    {OP_TYPES.map(op => (
+                      <option key={op} value={op}>{op}</option>
+                    ))}
+                  </select>
+                </span>
+              )}
               <span className="select-all-btn" onClick={selectAll}>すべて選択</span>
             </div>
 
