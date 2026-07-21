@@ -53,7 +53,53 @@ public class ModuleQueryService
             response.MariaDb = await QueryMariaDbAsync(config.MariaDbConnectionString, config.DevDb);
         }
 
+        response.StoredProcedures.AddRange(FindDeleteCandidates(config.GitRepoPath, "StoredProcedure", response.StoredProcedures));
+        response.Functions.AddRange(FindDeleteCandidates(config.GitRepoPath, "Function", response.Functions));
+        response.Views.AddRange(FindDeleteCandidates(config.GitRepoPath, "VIEW", response.Views));
+        response.Tables.AddRange(FindDeleteCandidates(config.GitRepoPath, "Table", response.Tables));
+        response.UserDefinedTableTypes.AddRange(FindDeleteCandidates(config.GitRepoPath, "UserDefinedTableType", response.UserDefinedTableTypes));
+
         return response;
+    }
+
+    private List<ModuleInfo> FindDeleteCandidates(string gitRepoPath, string type, List<ModuleInfo> existing)
+    {
+        var candidates = new List<ModuleInfo>();
+        if (string.IsNullOrEmpty(gitRepoPath)) return candidates;
+
+        var dir = Path.Combine(gitRepoPath, type);
+        if (!Directory.Exists(dir)) return candidates;
+
+        var existingNames = new HashSet<string>(existing.Select(m => m.Name), StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(dir, "dbo.*.sql"))
+            {
+                var fileName = Path.GetFileNameWithoutExtension(file);
+                var name = fileName.StartsWith("dbo.", StringComparison.OrdinalIgnoreCase)
+                    ? fileName["dbo.".Length..]
+                    : fileName;
+
+                if (existingNames.Contains(name)) continue;
+
+                candidates.Add(new ModuleInfo
+                {
+                    Name = name,
+                    Type = type,
+                    ModifyDate = "",
+                    GitOnly = type is "Table" or "UserDefinedTableType",
+                    IsDeleteCandidate = true,
+                });
+                existingNames.Add(name);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Delete candidate detection failed for type={Type}", type);
+        }
+
+        return candidates;
     }
 
     private async Task<List<ModuleInfo>> QuerySqlServerAsync(string connectionString, string sql, string type, bool gitOnly)
