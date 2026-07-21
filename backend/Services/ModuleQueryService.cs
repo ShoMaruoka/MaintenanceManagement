@@ -88,7 +88,7 @@ public class ModuleQueryService
                     Name = name,
                     Type = type,
                     ModifyDate = "",
-                    GitOnly = false,
+                    GitOnly = type is "Table" or "UserDefinedTableType",
                     IsDeleteCandidate = true,
                 });
                 existingNames.Add(name);
