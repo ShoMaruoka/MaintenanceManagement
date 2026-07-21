@@ -248,16 +248,10 @@ public class FastCopyService
     {
         var segments = relativePath.Replace('\\', '/')
             .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        var candidate = Path.GetFullPath(Path.Combine(new[] { filesDeploy2PrdPath }.Concat(segments).ToArray()));
-        var root = Path.GetFullPath(filesDeploy2PrdPath);
-        var rootWithSep = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-                          + Path.DirectorySeparatorChar;
-        if (!candidate.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase)
-            && !string.Equals(candidate, root, StringComparison.OrdinalIgnoreCase))
-        {
-            throw new InvalidOperationException($"FilesDeploy2PrdPath 外への書き込みは拒否しました: {relativePath}");
-        }
-        return candidate;
+        return PathSafety.CombineUnderRoot(
+            filesDeploy2PrdPath,
+            segments,
+            $"FilesDeploy2PrdPath 外への書き込みは拒否しました: {relativePath}");
     }
 
     private async Task RunFastCopyAsync(string src, string destDir, CancellationToken ct)

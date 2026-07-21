@@ -77,7 +77,7 @@ public class ImagePrepareService
             foreach (var file in Directory.EnumerateFiles(categoryDir, "*", SearchOption.AllDirectories))
             {
                 var full = Path.GetFullPath(file);
-                if (!IsUnderRoot(rootFull, full))
+                if (!PathSafety.IsUnderRoot(rootFull, full))
                     continue;
 
                 var relative = Path.GetRelativePath(rootFull, full).Replace('\\', '/');
@@ -126,6 +126,7 @@ public class ImagePrepareService
             throw new ArgumentException(error);
 
         var planned = new List<(IFormFile File, string FullPath, string RelativePath, bool Exists)>();
+        var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var file in files)
         {
@@ -136,13 +137,16 @@ public class ImagePrepareService
                 throw new ArgumentException($"ファイルサイズが上限（50MB）を超えています: {file.FileName}");
 
             var safeName = SanitizeFileName(file.FileName);
+            if (!seenNames.Add(safeName))
+                throw new ArgumentException($"同一リクエスト内で同名のファイルが複数指定されています: {safeName}");
+
             var ext = Path.GetExtension(safeName);
             if (!AllowedExtensions.Contains(ext))
                 throw new ArgumentException($"許可されていない拡張子です: {safeName}");
 
             var fullPath = Path.GetFullPath(Path.Combine(destDir, safeName));
             var root = Path.GetFullPath(config.FilesPath);
-            if (!IsUnderRoot(root, fullPath))
+            if (!PathSafety.IsUnderRoot(root, fullPath))
                 throw new ArgumentException($"Files 配下以外のパスは指定できません: {safeName}");
 
             var relative = BuildRelativeFile(category, relativeSubPath, safeName);
@@ -205,7 +209,7 @@ public class ImagePrepareService
         var candidate = Path.GetFullPath(Path.Combine(parts.ToArray()));
         var root = Path.GetFullPath(config.FilesPath);
 
-        if (!IsUnderRoot(root, candidate))
+        if (!PathSafety.IsUnderRoot(root, candidate))
         {
             error = "Files 配下以外のパスは指定できません";
             return false;
@@ -279,7 +283,7 @@ public class ImagePrepareService
         var candidate = Path.GetFullPath(Path.Combine(new[] { config.FilesPath }.Concat(segments).ToArray()));
         var root = Path.GetFullPath(config.FilesPath);
 
-        if (!IsUnderRoot(root, candidate))
+        if (!PathSafety.IsUnderRoot(root, candidate))
         {
             error = "Files 配下以外のパスは指定できません";
             return false;
@@ -409,19 +413,6 @@ public class ImagePrepareService
         }
 
         return entries;
-    }
-
-    private static bool IsUnderRoot(string rootFullPath, string candidateFullPath)
-    {
-        var root = rootFullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-                   + Path.DirectorySeparatorChar;
-        var candidate = candidateFullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-                        + Path.DirectorySeparatorChar;
-        return candidate.StartsWith(root, StringComparison.OrdinalIgnoreCase)
-               || string.Equals(
-                   candidateFullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                   rootFullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                   StringComparison.OrdinalIgnoreCase);
     }
 }
 
