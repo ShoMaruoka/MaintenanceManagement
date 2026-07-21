@@ -9,15 +9,44 @@ internal static class PathSafety
     /// </summary>
     public static bool IsUnderRoot(string rootFullPath, string candidateFullPath)
     {
-        var root = rootFullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-                   + Path.DirectorySeparatorChar;
-        var candidate = candidateFullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-                        + Path.DirectorySeparatorChar;
+        var root = NormalizeDirectory(rootFullPath) + Path.DirectorySeparatorChar;
+        var candidate = NormalizeDirectory(candidateFullPath) + Path.DirectorySeparatorChar;
         return candidate.StartsWith(root, StringComparison.OrdinalIgnoreCase)
-               || string.Equals(
-                   candidateFullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                   rootFullPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
-                   StringComparison.OrdinalIgnoreCase);
+               || AreSamePath(rootFullPath, candidateFullPath);
+    }
+
+    /// <summary>末尾セパレータを除いたパス同士が同一かを判定する。</summary>
+    public static bool AreSamePath(string pathA, string pathB)
+    {
+        return string.Equals(
+            NormalizeDirectory(pathA),
+            NormalizeDirectory(pathB),
+            StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// root と相対セグメントを結合し、結果が root 配下であれば true。
+    /// </summary>
+    public static bool TryCombineUnderRoot(
+        string rootPath,
+        IEnumerable<string> relativeSegments,
+        out string fullPath,
+        out string error,
+        string? rejectMessage = null)
+    {
+        fullPath = "";
+        error = "";
+
+        var candidate = Path.GetFullPath(Path.Combine(new[] { rootPath }.Concat(relativeSegments).ToArray()));
+        var root = Path.GetFullPath(rootPath);
+        if (!IsUnderRoot(root, candidate))
+        {
+            error = rejectMessage ?? "指定ルート配下以外のパスは指定できません";
+            return false;
+        }
+
+        fullPath = candidate;
+        return true;
     }
 
     /// <summary>
@@ -25,11 +54,11 @@ internal static class PathSafety
     /// </summary>
     public static string CombineUnderRoot(string rootPath, IEnumerable<string> relativeSegments, string rejectMessage)
     {
-        var segments = relativeSegments.ToArray();
-        var candidate = Path.GetFullPath(Path.Combine(new[] { rootPath }.Concat(segments).ToArray()));
-        var root = Path.GetFullPath(rootPath);
-        if (!IsUnderRoot(root, candidate))
-            throw new InvalidOperationException(rejectMessage);
-        return candidate;
+        if (!TryCombineUnderRoot(rootPath, relativeSegments, out var fullPath, out var error, rejectMessage))
+            throw new InvalidOperationException(error);
+        return fullPath;
     }
+
+    private static string NormalizeDirectory(string path) =>
+        path.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 }

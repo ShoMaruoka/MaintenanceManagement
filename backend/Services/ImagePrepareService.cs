@@ -203,20 +203,15 @@ public class ImagePrepareService
         if (!TryNormalizeSubPath(relativeSubPath, out var segments, out error))
             return false;
 
-        var parts = new List<string> { config.FilesPath, category };
-        parts.AddRange(segments);
+        var relativeParts = new List<string> { category };
+        relativeParts.AddRange(segments);
 
-        var candidate = Path.GetFullPath(Path.Combine(parts.ToArray()));
-        var root = Path.GetFullPath(config.FilesPath);
-
-        if (!PathSafety.IsUnderRoot(root, candidate))
-        {
-            error = "Files 配下以外のパスは指定できません";
-            return false;
-        }
-
-        fullDirectoryPath = candidate;
-        return true;
+        return PathSafety.TryCombineUnderRoot(
+            config.FilesPath,
+            relativeParts,
+            out fullDirectoryPath,
+            out error,
+            "Files 配下以外のパスは指定できません");
     }
 
     /// <summary>
@@ -280,17 +275,12 @@ public class ImagePrepareService
             }
         }
 
-        var candidate = Path.GetFullPath(Path.Combine(new[] { config.FilesPath }.Concat(segments).ToArray()));
-        var root = Path.GetFullPath(config.FilesPath);
-
-        if (!PathSafety.IsUnderRoot(root, candidate))
-        {
-            error = "Files 配下以外のパスは指定できません";
-            return false;
-        }
-
-        fullFilePath = candidate;
-        return true;
+        return PathSafety.TryCombineUnderRoot(
+            config.FilesPath,
+            segments,
+            out fullFilePath,
+            out error,
+            "Files 配下以外のパスは指定できません");
     }
 
     public static bool TryValidateCategory(string category, out string error)

@@ -206,38 +206,33 @@ public class FastCopyService
         string filesRoot,
         Action<string>? onRemoved = null)
     {
-        var rootFull = Path.GetFullPath(filesRoot)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-        var rootWithSep = rootFull + Path.DirectorySeparatorChar;
+        var rootFull = Path.GetFullPath(filesRoot);
         var current = Path.GetFullPath(startDirectory);
 
         while (true)
         {
-            var currentTrimmed = current.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-
-            if (string.Equals(currentTrimmed, rootFull, StringComparison.OrdinalIgnoreCase))
+            if (!PathSafety.IsUnderRoot(rootFull, current))
                 break;
 
-            if (!currentTrimmed.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase))
+            // Files ルート自体は削除しない
+            if (PathSafety.AreSamePath(current, rootFull))
                 break;
 
             // カテゴリルート（Files\Images 等）は削除しない
-            var parent = Directory.GetParent(currentTrimmed);
+            var parent = Directory.GetParent(current);
             if (parent is null)
                 break;
-            var parentTrimmed = parent.FullName
-                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            if (string.Equals(parentTrimmed, rootFull, StringComparison.OrdinalIgnoreCase))
+            if (PathSafety.AreSamePath(parent.FullName, rootFull))
                 break;
 
-            if (!Directory.Exists(currentTrimmed))
+            if (!Directory.Exists(current))
                 break;
 
-            if (Directory.EnumerateFileSystemEntries(currentTrimmed).Any())
+            if (Directory.EnumerateFileSystemEntries(current).Any())
                 break;
 
-            var relative = Path.GetRelativePath(rootFull, currentTrimmed).Replace('\\', '/');
-            Directory.Delete(currentTrimmed);
+            var relative = Path.GetRelativePath(rootFull, current).Replace('\\', '/');
+            Directory.Delete(current);
             onRemoved?.Invoke(relative);
 
             current = parent.FullName;
