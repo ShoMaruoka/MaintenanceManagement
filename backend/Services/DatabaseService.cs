@@ -26,7 +26,8 @@ public class DatabaseService
                 ExecutedBy   TEXT NOT NULL,
                 ExecutedAt   TEXT NOT NULL,
                 Status       TEXT NOT NULL,
-                ErrorMessage TEXT
+                ErrorMessage TEXT,
+                LogDetail    TEXT
             );
             CREATE TABLE IF NOT EXISTS DeploySessionDetail (
                 DetailId     INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,6 +61,15 @@ public class DatabaseService
             using var alter = conn.CreateCommand();
             alter.CommandText = "ALTER TABLE AppUser ADD COLUMN Role TEXT NOT NULL DEFAULT 'user';";
             alter.ExecuteNonQuery();
+        }
+        catch { /* 既にカラムが存在する場合は無視 */ }
+
+        // LogDetail カラムが存在しない場合は追加（既存 DB の後方互換）
+        try
+        {
+            using var alterLog = conn.CreateCommand();
+            alterLog.CommandText = "ALTER TABLE DeploySession ADD COLUMN LogDetail TEXT;";
+            alterLog.ExecuteNonQuery();
         }
         catch { /* 既にカラムが存在する場合は無視 */ }
     }
@@ -123,16 +133,17 @@ public class DatabaseService
         return (long)(cmd.ExecuteScalar() ?? 0);
     }
 
-    public void UpdateDeploySessionStatus(long sessionId, string status, string? errorMessage = null)
+    public void UpdateDeploySessionStatus(long sessionId, string status, string? errorMessage = null, string? logDetail = null)
     {
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            UPDATE DeploySession SET Status = $status, ErrorMessage = $errorMessage
+            UPDATE DeploySession SET Status = $status, ErrorMessage = $errorMessage, LogDetail = $logDetail
             WHERE SessionId = $sessionId;
             """;
         cmd.Parameters.AddWithValue("$status", status);
         cmd.Parameters.AddWithValue("$errorMessage", errorMessage ?? (object)DBNull.Value);
+        cmd.Parameters.AddWithValue("$logDetail", logDetail ?? (object)DBNull.Value);
         cmd.Parameters.AddWithValue("$sessionId", sessionId);
         cmd.ExecuteNonQuery();
     }
@@ -232,7 +243,7 @@ public class DatabaseService
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT SessionId, DbName, ExecutedBy, ExecutedAt, Status, ErrorMessage
+            SELECT SessionId, DbName, ExecutedBy, ExecutedAt, Status, ErrorMessage, LogDetail
             FROM DeploySession WHERE SessionId = $sessionId;
             """;
         cmd.Parameters.AddWithValue("$sessionId", sessionId);
@@ -247,6 +258,7 @@ public class DatabaseService
             ExecutedAt   = reader.GetString(3),
             Status       = reader.GetString(4),
             ErrorMessage = reader.IsDBNull(5) ? null : reader.GetString(5),
+            LogDetail    = reader.IsDBNull(6) ? null : reader.GetString(6),
         };
     }
 

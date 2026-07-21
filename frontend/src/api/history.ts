@@ -8,6 +8,7 @@ interface ApiDeploySession {
   executedAt: string
   status: string
   errorMessage?: string
+  logDetail?: string
   details: DeploySessionDetail[]
 }
 
@@ -76,5 +77,6 @@ function formatSession(session: ApiDeploySession): DeploySession {
     modules: modules || `${moduleCount} モジュール`,
     moduleCount,
     details: session.details,
+    logDetail: session.logDetail,
   }
 }

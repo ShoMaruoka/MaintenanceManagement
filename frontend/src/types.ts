@@ -50,6 +50,7 @@ export interface DeploySession {
   moduleCount: number
   details?: DeploySessionDetail[]
   detailsFetched?: boolean
+  logDetail?: string
 }
 
 export interface LogLine {
