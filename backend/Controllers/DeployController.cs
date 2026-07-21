@@ -76,7 +76,7 @@ public class DeployController : ControllerBase
         }
 
         var status = success ? "success" : "failed";
-        _db.UpdateDeploySessionStatus(sessionId, status, errorMessage);
+        _db.UpdateDeploySessionStatus(sessionId, status, errorMessage, logLines.ToString());
 
         foreach (var m in request.Modules)
         {

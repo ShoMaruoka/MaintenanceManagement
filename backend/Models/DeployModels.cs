@@ -30,6 +30,7 @@ public class DeploySession
     public string ExecutedAt { get; set; } = "";
     public string Status { get; set; } = "";
     public string? ErrorMessage { get; set; }
+    public string? LogDetail { get; set; }
     public List<DeploySessionDetail> Details { get; set; } = [];
 }
 

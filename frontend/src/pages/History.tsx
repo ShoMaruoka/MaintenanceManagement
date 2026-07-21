@@ -56,7 +56,7 @@ export default function History() {
     try {
       const session = await getSession(sessionId)
       setSessions(prev =>
-        prev.map(s => s.sessionId === sessionId ? { ...s, details: session.details, detailsFetched: true } : s)
+        prev.map(s => s.sessionId === sessionId ? { ...s, details: session.details, logDetail: session.logDetail, detailsFetched: true } : s)
       )
       setExpandError('')
       setExpandedId(sessionId)
@@ -163,6 +163,13 @@ export default function History() {
                   <div style={{ marginTop: 8, padding: '8px 10px', background: '#fcebed', border: '1px solid #f3c0c5', borderRadius: 6, fontSize: 11, color: '#c5283d' }}>
                     エラーが発生しました。実行ログを確認してください。
                   </div>
+                )}
+                {!expandError && (
+                  s.logDetail ? (
+                    <pre className="log-detail-full-log">{s.logDetail}</pre>
+                  ) : (
+                    <div style={{ fontSize: 11, color: '#9aa0a8', marginTop: 8 }}>ログがありません</div>
+                  )
                 )}
               </div>
             )}

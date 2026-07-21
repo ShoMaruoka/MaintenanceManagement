@@ -1709,6 +1709,20 @@ input {
   color: #3a3f46;
   font-size: 11px;
 }
+.log-detail-full-log {
+  margin-top: 8px;
+  max-height: 260px;
+  overflow-y: auto;
+  background: #16181d;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  line-height: 1.7;
+  color: #d4d7dc;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
 
 /* ---- Running status indicator ---- */
 .running-pulse {
