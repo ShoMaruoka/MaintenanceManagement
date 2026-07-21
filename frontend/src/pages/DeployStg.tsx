@@ -6,13 +6,13 @@ import SelectionSummary from '../components/SelectionSummary'
 import { getDbList, getModules } from '../api/modules'
 import type { DbListItem } from '../api/modules'
 
+// MariaDB は仕様見直し中のためモジュールツリーから一時非表示（型・API・バックエンドは残置）
 const MODULE_TYPES: ModuleType[] = [
   'StoredProcedure',
   'Function',
   'VIEW',
   'Table',
   'UserDefinedTableType',
-  'MariaDB',
 ]
 
 const OP_TYPES: OpType[] = ['更新', '新規', '削除']
