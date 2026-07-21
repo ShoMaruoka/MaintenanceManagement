@@ -6,6 +6,7 @@ public class ModuleInfo
     public string Type { get; set; } = "";
     public string ModifyDate { get; set; } = "";
     public bool GitOnly { get; set; }
+    public bool IsDeleteCandidate { get; set; }
 }
 
 public class ModuleListResponse
