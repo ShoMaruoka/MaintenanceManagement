@@ -19,12 +19,18 @@ public class PrepareController : ControllerBase
     };
     private readonly FastCopyService _fastCopy;
     private readonly DatabaseService _db;
+    private readonly ImagePrepareService _imagePrepare;
     private readonly List<DbConfig> _dbConfigs;
 
-    public PrepareController(FastCopyService fastCopy, DatabaseService db, IConfiguration config)
+    public PrepareController(
+        FastCopyService fastCopy,
+        DatabaseService db,
+        ImagePrepareService imagePrepare,
+        IConfiguration config)
     {
         _fastCopy = fastCopy;
         _db = db;
+        _imagePrepare = imagePrepare;
         _dbConfigs = config.GetSection("DbConfigs").Get<List<DbConfig>>() ?? [];
     }
 
@@ -41,6 +47,7 @@ public class PrepareController : ControllerBase
             entry.Files.AddRange(ReadFiles(config.DeployedHoldPath, "hold", "sqlserver"));
             entry.Files.AddRange(ReadFiles(config.MariaDbDeployedPath, "deployed", "mariadb"));
             entry.Files.AddRange(ReadFiles(config.MariaDbDeployedHoldPath, "hold", "mariadb"));
+            entry.ImageFiles.AddRange(_imagePrepare.ListRelativeFilePaths(config));
 
             result.Add(entry);
         }
@@ -64,7 +71,7 @@ public class PrepareController : ControllerBase
         try
         {
             var (applied, held, logDetail) = await _fastCopy.ExecuteAsync(
-                _dbConfigs, request.Selections, channel.Writer, ct);
+                _dbConfigs, request.Selections, request.ImageSelections, channel.Writer, ct);
 
             channel.Writer.Complete();
             await writeTask;

@@ -5,6 +5,7 @@ import Sidebar from './components/Sidebar'
 import Header from './components/Header'
 import Dashboard from './pages/Dashboard'
 import DeployStg from './pages/DeployStg'
+import ImagePrepare from './pages/ImagePrepare'
 import PrepareForPrd from './pages/PrepareForPrd'
 import History from './pages/History'
 import UserSelectPage from './pages/UserSelectPage'
@@ -13,6 +14,7 @@ import UserManagePage from './pages/UserManagePage'
 const PAGE_TITLES: Record<string, { title: string; path: string }> = {
   '/':             { title: 'ダッシュボード', path: '/ dashboard' },
   '/deploy':       { title: 'STG 適用',      path: '/ deploy' },
+  '/images':       { title: '画像情報準備',   path: '/ images' },
   '/prepare':      { title: '本番前準備',     path: '/ prepare' },
   '/history':      { title: '実行履歴',       path: '/ history' },
   '/admin/users':  { title: 'ユーザー管理',   path: '/ admin / users' },
@@ -44,6 +46,7 @@ function AppInner() {
           <Routes>
             <Route path="/"             element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
             <Route path="/deploy"       element={<ProtectedRoute><DeployStg /></ProtectedRoute>} />
+            <Route path="/images"       element={<ProtectedRoute><ImagePrepare /></ProtectedRoute>} />
             <Route path="/prepare"      element={<ProtectedRoute><PrepareForPrd /></ProtectedRoute>} />
             <Route path="/history"      element={<ProtectedRoute><History /></ProtectedRoute>} />
             <Route path="/admin/users"  element={<AdminRoute><UserManagePage /></AdminRoute>} />
