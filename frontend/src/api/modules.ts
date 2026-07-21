@@ -13,6 +13,7 @@ export interface ApiModuleInfo {
   type: ModuleType
   modifyDate: string
   gitOnly: boolean
+  isDeleteCandidate: boolean
 }
 
 export interface ApiModuleResponse {
@@ -47,5 +48,6 @@ function formatModules(items: ApiModuleInfo[]): Module[] {
     name: m.name,
     modifyDate: m.modifyDate,
     type: m.type,
+    isDeleteCandidate: m.isDeleteCandidate,
   }))
 }

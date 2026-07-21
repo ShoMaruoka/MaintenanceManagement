@@ -678,6 +678,23 @@ input {
   vertical-align: middle;
 }
 
+.module-delete-candidate-badge {
+  display: inline-block;
+  margin-left: 7px;
+  font-size: 9px;
+  font-weight: 700;
+  color: #c5283d;
+  background: #fcebed;
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: .04em;
+  vertical-align: middle;
+}
+
+.op-badge-fixed {
+  cursor: default;
+}
+
 .module-cat-name {
   font-size: 12px;
   color: #5b626b;

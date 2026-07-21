@@ -84,7 +84,7 @@ export default function DeployStg() {
   function toggleModule(module: Module) {
     updateDbSelection(selectedDb, m => {
       if (m.has(module.name)) m.delete(module.name)
-      else m.set(module.name, '更新')
+      else m.set(module.name, module.isDeleteCandidate ? '削除' : '更新')
       return m
     })
   }
@@ -93,16 +93,16 @@ export default function DeployStg() {
     updateDbSelection(selectedDb, m => { m.set(name, op); return m })
   }
 
-  function setOpTypeBulk(names: string[], op: OpType) {
+  function setOpTypeBulk(modules: Module[], op: OpType) {
     updateDbSelection(selectedDb, m => {
-      names.forEach(name => { if (m.has(name)) m.set(name, op) })
+      modules.forEach(mod => { if (m.has(mod.name)) m.set(mod.name, mod.isDeleteCandidate ? '削除' : op) })
       return m
     })
   }
 
   function selectAll() {
     updateDbSelection(selectedDb, m => {
-      filteredModules.forEach(mod => { if (!m.has(mod.name)) m.set(mod.name, '更新') })
+      filteredModules.forEach(mod => { if (!m.has(mod.name)) m.set(mod.name, mod.isDeleteCandidate ? '削除' : '更新') })
       return m
     })
   }
@@ -265,7 +265,7 @@ export default function DeployStg() {
                     onChange={e => {
                       const op = e.target.value as OpType
                       if (!op) return
-                      setOpTypeBulk(selectedInCurrentType.map(m => m.name), op)
+                      setOpTypeBulk(selectedInCurrentType, op)
                     }}
                     style={{ fontSize: 12, padding: '2px 4px' }}
                   >
@@ -312,21 +312,28 @@ export default function DeployStg() {
                         {(module.type === 'Table' || module.type === 'UserDefinedTableType') && (
                           <span className="module-git-only-badge">Git マージのみ</span>
                         )}
+                        {module.isDeleteCandidate && (
+                          <span className="module-delete-candidate-badge">削除候補</span>
+                        )}
                       </div>
                     </div>
                     {isSelected ? (
-                      <div onClick={e => e.stopPropagation()}>
-                        <select
-                          value={opType}
-                          onChange={e => setOpType(module.name, e.target.value as OpType)}
-                          className={`op-badge op-badge-${opType === '更新' ? 'update' : opType === '新規' ? 'new' : 'delete'}`}
-                          style={{ border: 'none', outline: 'none', appearance: 'none', cursor: 'pointer', paddingRight: 14 }}
-                        >
-                          {OP_TYPES.map(op => (
-                            <option key={op} value={op}>{op}</option>
-                          ))}
-                        </select>
-                      </div>
+                      module.isDeleteCandidate ? (
+                        <span className="op-badge op-badge-delete op-badge-fixed">削除</span>
+                      ) : (
+                        <div onClick={e => e.stopPropagation()}>
+                          <select
+                            value={opType}
+                            onChange={e => setOpType(module.name, e.target.value as OpType)}
+                            className={`op-badge op-badge-${opType === '更新' ? 'update' : opType === '新規' ? 'new' : 'delete'}`}
+                            style={{ border: 'none', outline: 'none', appearance: 'none', cursor: 'pointer', paddingRight: 14 }}
+                          >
+                            {OP_TYPES.map(op => (
+                              <option key={op} value={op}>{op}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )
                     ) : (
                       <span className="module-item-unselected">未選択</span>
                     )}
