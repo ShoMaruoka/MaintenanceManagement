@@ -8,18 +8,24 @@ public class FastCopyService
 {
     private readonly bool _dryRun;
     private readonly string _fastCopyExe;
+    private readonly ImagePrepareService _imagePrepare;
     private readonly ILogger<FastCopyService> _logger;
 
-    public FastCopyService(IConfiguration config, ILogger<FastCopyService> logger)
+    public FastCopyService(
+        IConfiguration config,
+        ImagePrepareService imagePrepare,
+        ILogger<FastCopyService> logger)
     {
         _dryRun = config.GetValue<bool>("DryRun");
         _fastCopyExe = config["FastCopyPath"] ?? @"C:\Program Files\FastCopy\FastCopy.exe";
+        _imagePrepare = imagePrepare;
         _logger = logger;
     }
 
     public async Task<(int applied, int held, string log)> ExecuteAsync(
         List<DbConfig> allConfigs,
         List<PrepareSelection> selections,
+        List<PrepareImageSelection> imageSelections,
         ChannelWriter<LogEntry> writer,
         CancellationToken ct)
     {
@@ -42,17 +48,25 @@ public class FastCopyService
 
         LogLine("INFO", $"本番前準備を開始します{dryRunTag}");
 
-        var selByDb = selections.GroupBy(s => s.DbName);
+        imageSelections ??= [];
 
-        foreach (var dbGroup in selByDb)
+        var dbNames = selections.Select(s => s.DbName)
+            .Concat(imageSelections.Select(s => s.DbName))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        foreach (var dbName in dbNames)
         {
-            var config = allConfigs.FirstOrDefault(c => c.Name == dbGroup.Key);
+            var config = allConfigs.FirstOrDefault(c => c.Name.Equals(dbName, StringComparison.OrdinalIgnoreCase));
             if (config is null) continue;
 
             LogLine("STEP", $"▶ {config.Name}");
 
-            var applyList = dbGroup.Where(s => s.Apply).ToList();
-            var holdList = dbGroup.Where(s => !s.Apply && s.Source == "deployed").ToList();
+            var dbSelections = selections
+                .Where(s => s.DbName.Equals(dbName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            var applyList = dbSelections.Where(s => s.Apply).ToList();
+            var holdList = dbSelections.Where(s => !s.Apply && s.Source == "deployed").ToList();
 
             // SQL Server files
             var sqlApply = applyList.Where(s => s.DbType == "sqlserver").ToList();
@@ -130,10 +144,120 @@ public class FastCopyService
                 }
                 held++;
             }
+
+            // 画像・静的ファイル（Files → FilesDeploy2PrdPath、相対パス維持で移動）
+            var imageApply = imageSelections
+                .Where(s => s.DbName.Equals(dbName, StringComparison.OrdinalIgnoreCase) && s.Apply)
+                .ToList();
+
+            if (imageApply.Count > 0)
+            {
+                if (string.IsNullOrWhiteSpace(config.FilesDeploy2PrdPath))
+                {
+                    LogLine("ERROR", $"  FilesDeploy2PrdPath が未設定です ({config.Name})");
+                    throw new InvalidOperationException(
+                        $"FilesDeploy2PrdPath is not configured for DB '{config.Name}'");
+                }
+
+                LogLine("INFO", $"  画像移動: {imageApply.Count} 件 → FilesDeploy2PrdPath{dryRunTag}");
+                foreach (var sel in imageApply)
+                {
+                    if (!_imagePrepare.TryResolveRelativeFile(config, sel.RelativePath, out var src, out var resolveError))
+                    {
+                        LogLine("ERROR", $"  → {sel.RelativePath}  パス不正: {resolveError}");
+                        throw new InvalidOperationException(resolveError);
+                    }
+
+                    if (!_dryRun && !File.Exists(src))
+                    {
+                        LogLine("ERROR", $"  → {sel.RelativePath}  元ファイルがありません");
+                        throw new FileNotFoundException($"Image file not found: {sel.RelativePath}", src);
+                    }
+
+                    var dest = ResolveFilesDeployPath(config.FilesDeploy2PrdPath, sel.RelativePath);
+                    LogLine("DETAIL", $"  → {sel.RelativePath}{dryRunTag}");
+
+                    if (!_dryRun)
+                    {
+                        Directory.CreateDirectory(Path.GetDirectoryName(dest)!);
+                        File.Copy(src, dest, overwrite: true);
+                        File.Delete(src);
+                        RemoveEmptyParentDirectories(
+                            Path.GetDirectoryName(src)!,
+                            config.FilesPath,
+                            relative => LogLine("DETAIL", $"  → 空フォルダ削除: {relative}"));
+                    }
+
+                    applied++;
+                }
+            }
         }
 
         LogLine("OK", $"✅ 本番前準備が完了しました  適用: {applied} 件  保留: {held} 件");
         return (applied, held, logLines.ToString());
+    }
+
+    /// <summary>
+    /// ファイル削除後に空になったサブフォルダのみ削除する。
+    /// Images / news / pdf などのカテゴリルートと Files 自体は残す。
+    /// </summary>
+    private static void RemoveEmptyParentDirectories(
+        string startDirectory,
+        string filesRoot,
+        Action<string>? onRemoved = null)
+    {
+        var rootFull = Path.GetFullPath(filesRoot)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        var rootWithSep = rootFull + Path.DirectorySeparatorChar;
+        var current = Path.GetFullPath(startDirectory);
+
+        while (true)
+        {
+            var currentTrimmed = current.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+            if (string.Equals(currentTrimmed, rootFull, StringComparison.OrdinalIgnoreCase))
+                break;
+
+            if (!currentTrimmed.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase))
+                break;
+
+            // カテゴリルート（Files\Images 等）は削除しない
+            var parent = Directory.GetParent(currentTrimmed);
+            if (parent is null)
+                break;
+            var parentTrimmed = parent.FullName
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (string.Equals(parentTrimmed, rootFull, StringComparison.OrdinalIgnoreCase))
+                break;
+
+            if (!Directory.Exists(currentTrimmed))
+                break;
+
+            if (Directory.EnumerateFileSystemEntries(currentTrimmed).Any())
+                break;
+
+            var relative = Path.GetRelativePath(rootFull, currentTrimmed).Replace('\\', '/');
+            Directory.Delete(currentTrimmed);
+            onRemoved?.Invoke(relative);
+
+            current = parent.FullName;
+        }
+    }
+
+    private static string ResolveFilesDeployPath(string filesDeploy2PrdPath, string relativePath)
+    {
+        var segments = relativePath.Replace('\\', '/')
+            .Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var candidate = Path.GetFullPath(Path.Combine(new[] { filesDeploy2PrdPath }.Concat(segments).ToArray()));
+        var root = Path.GetFullPath(filesDeploy2PrdPath);
+        var rootWithSep = root.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                          + Path.DirectorySeparatorChar;
+        if (!candidate.StartsWith(rootWithSep, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(candidate, root, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException($"FilesDeploy2PrdPath 外への書き込みは拒否しました: {relativePath}");
+        }
+        return candidate;
     }
 
     private async Task RunFastCopyAsync(string src, string destDir, CancellationToken ct)

@@ -26,6 +26,17 @@ const NAV_ITEMS = [
     ),
   },
   {
+    to: '/images',
+    label: '画像情報準備',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <rect x="2" y="3" width="12" height="10" rx="1.3" stroke="currentColor" strokeWidth="1.4"/>
+        <circle cx="5.5" cy="6.5" r="1.2" stroke="currentColor" strokeWidth="1.2"/>
+        <path d="M2.5 11.5l3.2-3.2a1 1 0 011.4 0L10 11.2l1.3-1.3a1 1 0 011.4 0l1.3 1.3" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    ),
+  },
+  {
     to: '/prepare',
     label: '本番前準備',
     icon: (

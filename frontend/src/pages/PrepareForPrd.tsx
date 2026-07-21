@@ -1,6 +1,11 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import type { DbName, LogLine } from '../types'
-import { getPrepareFiles, startPrepare, type ApiPrepareSelection } from '../api/prepare'
+import {
+  getPrepareFiles,
+  startPrepare,
+  type ApiPrepareImageSelection,
+  type ApiPrepareSelection,
+} from '../api/prepare'
 import { useUser } from '../context/UserContext'
 import PrepareCompareView from '../components/PrepareCompareView'
 
@@ -18,10 +23,15 @@ interface PrepareFile {
 interface DbEntry {
   dbName: DbName
   files: PrepareFile[]
+  imageFiles: string[]
 }
 
 function fileKey(dbName: DbName, file: PrepareFile) {
   return `${dbName}::${file.dbType}::${file.source}::${file.fileName}`
+}
+
+function imageKey(dbName: DbName, relativePath: string) {
+  return `${dbName}::image::${relativePath}`
 }
 
 export default function PrepareForPrd() {
@@ -34,49 +44,54 @@ export default function PrepareForPrd() {
   const [error, setError] = useState<string>('')
   const [checked, setChecked] = useState<Set<string>>(new Set())
 
-  useEffect(() => {
-    const loadFiles = async () => {
-      try {
-        setLoading(true)
-        const entries = await getPrepareFiles()
-        const dbMap: Record<DbName, DbEntry> = {
-          kaios: { dbName: 'kaios', files: [] },
-          gos: { dbName: 'gos', files: [] },
-          paf: { dbName: 'paf', files: [] },
-          duskin: { dbName: 'duskin', files: [] },
-        }
+  const loadFiles = useCallback(async () => {
+    try {
+      setLoading(true)
+      setError('')
+      const entries = await getPrepareFiles()
+      const dbMap: Record<DbName, DbEntry> = {
+        kaios: { dbName: 'kaios', files: [], imageFiles: [] },
+        gos: { dbName: 'gos', files: [], imageFiles: [] },
+        paf: { dbName: 'paf', files: [], imageFiles: [] },
+        duskin: { dbName: 'duskin', files: [], imageFiles: [] },
+      }
 
-        entries.forEach(entry => {
-          if (dbMap[entry.dbName]) {
-            dbMap[entry.dbName].files = entry.files.map(f => ({
-              fileName: f.fileName,
-              source: f.source,
-              dbType: f.dbType,
-            }))
+      entries.forEach(entry => {
+        if (dbMap[entry.dbName]) {
+          dbMap[entry.dbName].files = entry.files.map(f => ({
+            fileName: f.fileName,
+            source: f.source,
+            dbType: f.dbType,
+          }))
+          dbMap[entry.dbName].imageFiles = entry.imageFiles ?? []
+        }
+      })
+
+      const orderedEntries = Object.values(dbMap)
+      setDbEntries(orderedEntries)
+
+      const initial = new Set<string>()
+      orderedEntries.forEach(db => {
+        db.files.forEach(f => {
+          if (f.source === 'deployed') {
+            initial.add(fileKey(db.dbName, f))
           }
         })
-
-        const orderedEntries = Object.values(dbMap)
-        setDbEntries(orderedEntries)
-
-        const initial = new Set<string>()
-        orderedEntries.forEach(db => {
-          db.files.forEach(f => {
-            if (f.source === 'deployed') {
-              initial.add(fileKey(db.dbName, f))
-            }
-          })
+        db.imageFiles.forEach(path => {
+          initial.add(imageKey(db.dbName, path))
         })
-        setChecked(initial)
-      } catch (err) {
-        setError((err as Error).message)
-      } finally {
-        setLoading(false)
-      }
+      })
+      setChecked(initial)
+    } catch (err) {
+      setError((err as Error).message)
+    } finally {
+      setLoading(false)
     }
-
-    loadFiles()
   }, [])
+
+  useEffect(() => {
+    void loadFiles()
+  }, [loadFiles])
 
   function toggle(key: string) {
     setChecked(prev => {
@@ -101,14 +116,36 @@ export default function PrepareForPrd() {
     })
   }
 
-  const totalChecked = useMemo(() => {
-    let count = 0
+  function toggleAllImages(dbName: DbName, toCheck: boolean) {
+    const db = dbEntries.find(d => d.dbName === dbName)
+    if (!db) return
+    setChecked(prev => {
+      const next = new Set(prev)
+      db.imageFiles.forEach(path => {
+        const k = imageKey(dbName, path)
+        if (toCheck) next.add(k)
+        else next.delete(k)
+      })
+      return next
+    })
+  }
+
+  const { totalSqlChecked, totalImageChecked, totalChecked } = useMemo(() => {
+    let sql = 0
+    let images = 0
     dbEntries.forEach(db => {
       db.files.forEach(f => {
-        if (checked.has(fileKey(db.dbName, f))) count++
+        if (checked.has(fileKey(db.dbName, f))) sql++
+      })
+      db.imageFiles.forEach(path => {
+        if (checked.has(imageKey(db.dbName, path))) images++
       })
     })
-    return count
+    return {
+      totalSqlChecked: sql,
+      totalImageChecked: images,
+      totalChecked: sql + images,
+    }
   }, [checked, dbEntries])
 
   async function runPreparation() {
@@ -116,6 +153,7 @@ export default function PrepareForPrd() {
     setLogLines([])
 
     const selections: ApiPrepareSelection[] = []
+    const imageSelections: ApiPrepareImageSelection[] = []
     dbEntries.forEach(db => {
       db.files.forEach(f => {
         const k = fileKey(db.dbName, f)
@@ -125,6 +163,13 @@ export default function PrepareForPrd() {
           source: f.source,
           dbType: f.dbType,
           apply: checked.has(k),
+        })
+      })
+      db.imageFiles.forEach(path => {
+        imageSelections.push({
+          dbName: db.dbName,
+          relativePath: path,
+          apply: checked.has(imageKey(db.dbName, path)),
         })
       })
     })
@@ -137,7 +182,19 @@ export default function PrepareForPrd() {
       setPageState('done')
     }
 
-    await startPrepare(selections, currentUser ?? 'unknown', handleLog, handleDone)
+    await startPrepare(
+      selections,
+      imageSelections,
+      currentUser ?? 'unknown',
+      handleLog,
+      handleDone,
+    )
+  }
+
+  async function backToSelect() {
+    setLogLines([])
+    setPageState('select')
+    await loadFiles()
   }
 
   if (loading) {
@@ -189,7 +246,7 @@ export default function PrepareForPrd() {
           </div>
         </div>
         {pageState === 'done' && (
-          <button className="btn-secondary" onClick={() => { setPageState('select'); setLogLines([]) }}>
+          <button className="btn-secondary" onClick={() => void backToSelect()}>
             ← 本番前準備画面に戻る
           </button>
         )}
@@ -206,6 +263,7 @@ export default function PrepareForPrd() {
         未選択のファイルは{' '}
         <span style={{ fontFamily: "'JetBrains Mono', monospace", color: '#3a3f46' }}>deployed_hold/</span>{' '}
         へ移動して次回まで保留されます。
+        画像ファイル（Files）も同様に選択し、本番フォルダへ移動できます。
       </div>
 
       <button
@@ -224,19 +282,24 @@ export default function PrepareForPrd() {
           const holdFiles     = db.files.filter(f => f.source === 'hold')
           const deployedCheckedCount = deployedFiles.filter(f => checked.has(fileKey(db.dbName, f))).length
           const holdCheckedCount     = holdFiles.filter(f => checked.has(fileKey(db.dbName, f))).length
+          const imageCheckedCount    = db.imageFiles.filter(p => checked.has(imageKey(db.dbName, p))).length
           const allDeployedChecked   = deployedFiles.length > 0 && deployedCheckedCount === deployedFiles.length
           const allHoldChecked       = holdFiles.length > 0 && holdCheckedCount === holdFiles.length
+          const allImagesChecked     = db.imageFiles.length > 0 && imageCheckedCount === db.imageFiles.length
+          const totalItems = db.files.length + db.imageFiles.length
+          const totalCheckedInDb = deployedCheckedCount + holdCheckedCount + imageCheckedCount
+          const hasAny = totalItems > 0
 
           return (
             <div key={db.dbName} className="prep-db-card">
               <div className="prep-db-card-header">
                 <span className="prep-db-name">{db.dbName}</span>
                 <span className="prep-db-count">
-                  {deployedCheckedCount + holdCheckedCount}/{db.files.length} 件
+                  {totalCheckedInDb}/{totalItems} 件
                 </span>
               </div>
 
-              {db.files.length === 0 ? (
+              {!hasAny ? (
                 <div className="prep-db-files">
                   <div className="prep-file-item-empty">対象ファイルなし</div>
                 </div>
@@ -244,7 +307,7 @@ export default function PrepareForPrd() {
                 <div className="prep-db-files">
                   {/* 今回適用する セクション */}
                   <div className="prep-section-header">
-                    <span className="prep-section-label prep-section-label-apply">今回適用する</span>
+                    <span className="prep-section-label prep-section-label-apply">今回適用する（SQL）</span>
                     {deployedFiles.length > 1 && (
                       <button
                         className="prep-toggle-all-btn"
@@ -284,7 +347,7 @@ export default function PrepareForPrd() {
                   {holdFiles.length > 0 && (
                     <>
                       <div className="prep-section-header" style={{ marginTop: 10 }}>
-                        <span className="prep-section-label prep-section-label-hold">保留中</span>
+                        <span className="prep-section-label prep-section-label-hold">保留中（SQL）</span>
                         {holdFiles.length > 1 && (
                           <button
                             className="prep-toggle-all-btn"
@@ -317,6 +380,44 @@ export default function PrepareForPrd() {
                       })}
                     </>
                   )}
+
+                  {/* 画像ファイル セクション */}
+                  <div className="prep-section-header" style={{ marginTop: 10 }}>
+                    <span className="prep-section-label prep-section-label-image">画像・静的ファイル</span>
+                    {db.imageFiles.length > 1 && (
+                      <button
+                        className="prep-toggle-all-btn"
+                        onClick={() => toggleAllImages(db.dbName, !allImagesChecked)}
+                      >
+                        {allImagesChecked ? '全解除' : '全選択'}
+                      </button>
+                    )}
+                  </div>
+                  {db.imageFiles.length === 0 ? (
+                    <div className="prep-file-item-empty">対象ファイルなし</div>
+                  ) : (
+                    db.imageFiles.map(path => {
+                      const k = imageKey(db.dbName, path)
+                      const isChecked = checked.has(k)
+                      return (
+                        <div
+                          key={k}
+                          className={`prep-file-item prep-file-item-selectable prep-file-item-image${isChecked ? ' selected' : ''}`}
+                          onClick={() => toggle(k)}
+                        >
+                          <span className={`checkbox${isChecked ? ' checked' : ''}`} style={{ width: 13, height: 13, minWidth: 13, borderRadius: 3 }}>
+                            {isChecked && (
+                              <svg width="8" height="8" viewBox="0 0 10 10">
+                                <path d="M1.5 5.2l2.2 2.3L8.5 2.5" stroke="#fff" strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                              </svg>
+                            )}
+                          </span>
+                          <span className="prep-file-name" title={path}>{path}</span>
+                          <span className="prep-file-db-badge">Files</span>
+                        </div>
+                      )
+                    })
+                  )}
                 </div>
               )}
             </div>
@@ -327,7 +428,8 @@ export default function PrepareForPrd() {
 
       <div className="prep-action-area">
         <div className="prep-action-desc">
-          <strong>計 {totalChecked} ファイル</strong> を本番適用フォルダへコピーします。
+          <strong>計 {totalChecked} ファイル</strong>
+          {' '}（SQL {totalSqlChecked} / 画像 {totalImageChecked}）を本番適用フォルダへコピー・移動します。
           {(() => {
             let holdCount = 0
             dbEntries.forEach(db => {
@@ -336,7 +438,7 @@ export default function PrepareForPrd() {
               })
             })
             return holdCount > 0
-              ? <span style={{ color: '#8a5c14', marginLeft: 6 }}>（{holdCount} 件は保留フォルダへ移動）</span>
+              ? <span style={{ color: '#8a5c14', marginLeft: 6 }}>（SQL {holdCount} 件は保留フォルダへ移動）</span>
               : null
           })()}
         </div>
@@ -363,8 +465,8 @@ export default function PrepareForPrd() {
         <div style={{ marginTop: 12, padding: '10px 14px', background: '#fbf1dd', border: '1px solid #ece2cf', borderRadius: 7, fontSize: 12, color: '#7a6433', display: 'flex', gap: 8 }}>
           <span style={{ color: '#b25e09' }}>●</span>
           <span>
-            選択した {totalChecked} ファイルを FastCopy でコピーします。
-            未選択の deployed/ ファイルは deployed_hold/ へ移動されます。実行してよろしいですか？
+            選択した SQL {totalSqlChecked} 件・画像 {totalImageChecked} 件（合計 {totalChecked}）を本番フォルダへコピー／移動します。
+            未選択の deployed/ SQL は deployed_hold/ へ移動されます。実行してよろしいですか？
           </span>
         </div>
       )}

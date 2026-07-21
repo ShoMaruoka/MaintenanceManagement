@@ -22,6 +22,8 @@ public class DbConfig
     public string GitRepoPath { get; set; } = "";
     public string DeployDev2StgPath { get; set; } = "";
     public string Deploy2PrdPath { get; set; } = "";
+    /// <summary>静的ファイル（Images/news/pdf）の本番移動先。SQL 用 Deploy2PrdPath とは別系統。</summary>
+    public string FilesDeploy2PrdPath { get; set; } = "";
 
     public string MergePath => Path.Combine(SourceControlPath, "merge");
     public string ForNewCreationPath => Path.Combine(DeployDev2StgPath, "ForNewCreation");
@@ -31,4 +33,6 @@ public class DbConfig
     public string MariaDbSourcePath => Path.Combine(DeployDev2StgPath, "MariaDB");
     public string MariaDbDeployedPath => Path.Combine(MariaDbSourcePath, "deployed");
     public string MariaDbDeployedHoldPath => Path.Combine(MariaDbSourcePath, "deployed_hold");
+    /// <summary>STG 側静的ファイル保管先（DeployDev2StgPath\Files）。</summary>
+    public string FilesPath => Path.Combine(DeployDev2StgPath, "Files");
 }
