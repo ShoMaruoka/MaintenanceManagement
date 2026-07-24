@@ -29,6 +29,7 @@ builder.Services.AddScoped<ModuleQueryService>();
 builder.Services.AddScoped<DeployService>();
 builder.Services.AddScoped<FastCopyService>();
 builder.Services.AddScoped<ImagePrepareService>();
+builder.Services.AddScoped<WebSourceDeployService>();
 
 builder.Services.AddCors(options =>
 {
