@@ -48,7 +48,7 @@ const NAV_ITEMS = [
   },
   {
     to: '/web-source',
-    label: 'Webソース配布',
+    label: 'Pilot環境適用',
     icon: (
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
         <rect x="1.5" y="3" width="5.5" height="10" rx="1.2" stroke="currentColor" strokeWidth="1.4"/>

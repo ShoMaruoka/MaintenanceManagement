@@ -73,9 +73,9 @@ public class WebSourcePrepareController : ControllerBase
             return;
         }
 
-        var mode = request.Mode == "full" ? "full" : "mirror";
         var executedBy = string.IsNullOrWhiteSpace(request.ExecutedBy) ? "unknown" : request.ExecutedBy;
         var runId = Guid.NewGuid().ToString("n");
+        var step = ParseStep(request.Step);
 
         Response.Headers.ContentType = "text/event-stream";
         Response.Headers.CacheControl = "no-cache";
@@ -87,7 +87,7 @@ public class WebSourcePrepareController : ControllerBase
 
         try
         {
-            var results = await _deployService.ExecuteAsync(config, mode, channel.Writer, ct);
+            var (results, sqlDeploy) = await _deployService.ExecuteAsync(config, channel.Writer, ct, step);
 
             channel.Writer.Complete();
             await writeTask;
@@ -95,17 +95,25 @@ public class WebSourcePrepareController : ControllerBase
             foreach (var r in results)
             {
                 _db.InsertWebSourceDeployLog(
-                    runId, config.Name, r.TargetName, mode, executedBy,
+                    runId, config.Name, r.TargetName, "full", executedBy,
                     r.Success ? "success" : "failed", r.ErrorMessage);
             }
 
-            var overallSuccess = results.Count > 0 && results.All(r => r.Success);
+            if (sqlDeploy is not null)
+            {
+                _db.InsertWebSourceDeployLog(
+                    runId, config.Name, "sql", "full", executedBy,
+                    sqlDeploy.Success ? "success" : "failed", sqlDeploy.ErrorMessage);
+            }
+
+            var overallSuccess = results.Count > 0 && results.All(r => r.Success) && (sqlDeploy is null || sqlDeploy.Success);
             var doneJson = JsonSerializer.Serialize(new
             {
                 type = "done",
                 runId,
                 success = overallSuccess,
                 targets = results,
+                sqlDeploy,
             }, _camelCase);
             await Response.Body.WriteAsync(Encoding.UTF8.GetBytes($"data: {doneJson}\n\n"), ct);
             await Response.Body.FlushAsync(ct);
@@ -114,7 +122,7 @@ public class WebSourcePrepareController : ControllerBase
         {
             channel.Writer.TryComplete(ex);
             await writeTask;
-            _db.InsertWebSourceDeployLog(runId, config.Name, "-", mode, executedBy, "failed", ex.Message);
+            _db.InsertWebSourceDeployLog(runId, config.Name, "-", "full", executedBy, "failed", ex.Message);
         }
     }
 
@@ -128,6 +136,14 @@ public class WebSourcePrepareController : ControllerBase
             await Response.Body.FlushAsync(ct);
         }
     }
+
+    /// <summary>リクエストの "step" 文字列を解析する。未指定・不正値は "both" として扱う。</summary>
+    private static WebSourceDeployStep ParseStep(string? step) => step?.ToLowerInvariant() switch
+    {
+        "web" => WebSourceDeployStep.WebOnly,
+        "sql" => WebSourceDeployStep.SqlOnly,
+        _ => WebSourceDeployStep.Both,
+    };
 
     private static bool IsAllowedDbName(string dbName) =>
         AllowedDbNames.Contains(dbName, StringComparer.OrdinalIgnoreCase);

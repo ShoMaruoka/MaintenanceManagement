@@ -3,8 +3,6 @@ import type { LogLine } from '../types'
 
 export type WebSourceDbName = 'kaios' | 'gos'
 
-export type WebSourceDeployMode = 'mirror' | 'full'
-
 export interface ApiWebSourcePilotTargetInfo {
   name: string
   destWebSourcePath: string
@@ -16,9 +14,11 @@ export interface ApiWebSourceInfo {
   pilotTargets: ApiWebSourcePilotTargetInfo[]
 }
 
+export type WebSourceDeployStep = 'both' | 'web' | 'sql'
+
 export interface ApiWebSourceDeployRequest {
-  mode: WebSourceDeployMode
   executedBy: string
+  step: WebSourceDeployStep
 }
 
 export interface ApiWebSourceTargetResult {
@@ -27,11 +27,18 @@ export interface ApiWebSourceTargetResult {
   errorMessage?: string | null
 }
 
+export interface ApiWebSourceSqlDeployResult {
+  success: boolean
+  exitCode?: number | null
+  errorMessage?: string | null
+}
+
 export interface ApiWebSourceDeployDone {
   type: 'done'
   runId: string
   success: boolean
   targets: ApiWebSourceTargetResult[]
+  sqlDeploy?: ApiWebSourceSqlDeployResult | null
 }
 
 export type ApiWebSourceStreamEvent = (LogLine & { type?: never }) | ApiWebSourceDeployDone
@@ -46,13 +53,13 @@ export async function getWebSourceInfo(dbName: WebSourceDbName): Promise<ApiWebS
 
 export function startWebSourceDeploy(
   dbName: WebSourceDbName,
-  mode: WebSourceDeployMode,
   executedBy: string,
+  step: WebSourceDeployStep,
   onLog: (line: LogLine) => void,
   onDone: (result: ApiWebSourceDeployDone) => void,
   onError?: (error: Error) => void,
 ): Promise<void> {
-  const request: ApiWebSourceDeployRequest = { mode, executedBy }
+  const request: ApiWebSourceDeployRequest = { executedBy, step }
 
   return fetchStream<ApiWebSourceStreamEvent>(
     `/web-source-prepare/${dbName}/stream`,

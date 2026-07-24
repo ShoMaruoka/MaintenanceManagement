@@ -6,7 +6,7 @@ import {
   type ApiWebSourceInfo,
   type ApiWebSourceDeployDone,
   type WebSourceDbName,
-  type WebSourceDeployMode,
+  type WebSourceDeployStep,
 } from '../api/webSourcePrepare'
 import { useUser } from '../context/UserContext'
 
@@ -17,15 +17,16 @@ const DB_OPTIONS: { value: WebSourceDbName; label: string }[] = [
   { value: 'gos', label: 'gos' },
 ]
 
-const MODE_OPTIONS: { value: WebSourceDeployMode; label: string; desc: string }[] = [
-  { value: 'mirror', label: '差分ミラー（/MIR）', desc: 'STG 側にないファイルは pilot 側からも削除されます' },
-  { value: 'full', label: '全量コピー（/E）', desc: 'STG 側のファイルのみコピーし、pilot 側の余剰ファイルは残します' },
+const STEP_OPTIONS: { value: WebSourceDeployStep; label: string; desc: string }[] = [
+  { value: 'both', label: '両方', desc: 'Webソースコピー（pilot1→pilot2）＋SQL適用' },
+  { value: 'web', label: 'Webソースコピーのみ', desc: 'SQL適用は行いません' },
+  { value: 'sql', label: 'SQL適用のみ', desc: 'Webソースコピーは行わず、SQL適用のみ実行します' },
 ]
 
 export default function WebSourcePrepare() {
   const { currentUser } = useUser()
   const [dbName, setDbName] = useState<WebSourceDbName>('kaios')
-  const [mode, setMode] = useState<WebSourceDeployMode>('mirror')
+  const [step, setStep] = useState<WebSourceDeployStep>('both')
   const [info, setInfo] = useState<ApiWebSourceInfo | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>('')
@@ -33,9 +34,16 @@ export default function WebSourcePrepare() {
   const [logLines, setLogLines] = useState<LogLine[]>([])
   const [currentTarget, setCurrentTarget] = useState<string>('')
   const [result, setResult] = useState<ApiWebSourceDeployDone | null>(null)
+  const logRef = useRef<HTMLDivElement>(null)
 
   // info取得のレース対策: 最後に発行したリクエストの世代のみ反映する
   const infoRequestSeq = useRef(0)
+
+  useEffect(() => {
+    if (logRef.current) {
+      logRef.current.scrollTop = logRef.current.scrollHeight
+    }
+  }, [logLines])
 
   const loadInfo = useCallback(async (target: WebSourceDbName) => {
     const seq = ++infoRequestSeq.current
@@ -91,8 +99,8 @@ export default function WebSourcePrepare() {
     try {
       await startWebSourceDeploy(
         dbName,
-        mode,
         currentUser ?? 'unknown',
+        step,
         handleLog,
         (doneResult) => markDone(() => handleDone(doneResult)),
         (err) => markDone(() => handleError(err)),
@@ -122,7 +130,7 @@ export default function WebSourcePrepare() {
         <div style={{ background: '#fff', border: '1px solid #e4e6ea', borderRadius: 8, overflow: 'hidden', marginBottom: 14 }}>
           <div style={{ padding: '11px 16px', borderBottom: '1px solid #eef0f2', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <span style={{ fontSize: 12.5, fontWeight: 600 }}>
-              Web ソース配布 実行ログ（{dbName}）
+              Pilot環境適用 実行ログ（{dbName}）
               {pageState === 'running' && currentTarget && (
                 <span style={{ marginLeft: 8, color: '#6b7280', fontWeight: 400 }}>
                   処理中: {currentTarget}
@@ -143,7 +151,7 @@ export default function WebSourcePrepare() {
               {pageState === 'running' ? '実行中' : (result?.success ? '完了' : '失敗')}
             </span>
           </div>
-          <div style={{ background: '#16181d', padding: '14px 18px', minHeight: 240, maxHeight: 400, overflowY: 'auto', fontFamily: "'JetBrains Mono', monospace", fontSize: 11.5, lineHeight: 1.85 }}>
+          <div ref={logRef} style={{ background: '#16181d', padding: '14px 18px', minHeight: 240, maxHeight: 400, overflowY: 'auto', fontFamily: "'JetBrains Mono', monospace", fontSize: 11.5, lineHeight: 1.85 }}>
             {logLines.map((line, i) => (
               <div key={i} style={{
                 color: line.level === 'OK'   ? '#5ec48c'
@@ -174,6 +182,15 @@ export default function WebSourcePrepare() {
                 )}
               </div>
             ))}
+            {result.sqlDeploy && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '4px 0', borderTop: '1px solid #eef0f2', marginTop: 6, paddingTop: 8 }}>
+                <span style={{ color: result.sqlDeploy.success ? '#22a06b' : '#c5283d' }}>{result.sqlDeploy.success ? '✓' : '✗'}</span>
+                <span style={{ fontWeight: 600 }}>SQL適用</span>
+                {!result.sqlDeploy.success && result.sqlDeploy.errorMessage && (
+                  <span style={{ color: '#c5283d' }}>{result.sqlDeploy.errorMessage}</span>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -185,7 +202,7 @@ export default function WebSourcePrepare() {
 
         {pageState === 'done' && (
           <button className="btn-secondary" onClick={backToSelect}>
-            ← Web ソース配布画面に戻る
+            ← Pilot環境適用画面に戻る
           </button>
         )}
       </div>
@@ -195,8 +212,9 @@ export default function WebSourcePrepare() {
   return (
     <div>
       <div style={{ marginBottom: 16, fontSize: 12, color: '#6b7280', lineHeight: 1.6 }}>
-        STG サーバーの Web ソース（公開フォルダ）を pilot1 → pilot2 の順に自動でコピーし、
+        STG サーバーの Web ソース（公開フォルダ）を pilot1 → pilot2 の順に自動でコピーします（削除同期なしの全量コピーのみ）。
         コピー完了後に各 pilot 側 web.config の接続文字列を書き換えます。pilot1 が失敗した場合、pilot2 は実行されません。
+        すべて成功した場合、続けて SQL ファイルの pilot 環境への適用（コピー＋deploy.bat実行）を行います。
       </div>
 
       <div style={{ background: '#fff', border: '1px solid #e4e6ea', borderRadius: 8, padding: '16px 18px', marginBottom: 14 }}>
@@ -231,31 +249,31 @@ export default function WebSourcePrepare() {
           </div>
         ) : null}
 
-        <div style={{ marginBottom: 4 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>コピー方式</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {MODE_OPTIONS.map(opt => (
-              <label key={opt.value} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12, cursor: 'pointer' }}>
-                <input
-                  type="radio"
-                  name="mode"
-                  checked={mode === opt.value}
-                  onChange={() => setMode(opt.value)}
-                  style={{ marginTop: 2 }}
-                />
-                <span>
-                  <span style={{ fontWeight: 600 }}>{opt.label}</span>
-                  <span style={{ color: '#8a9099', marginLeft: 6 }}>{opt.desc}</span>
-                </span>
-              </label>
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>実行内容</div>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            {STEP_OPTIONS.map(opt => (
+              <button
+                key={opt.value}
+                className={step === opt.value ? 'btn-primary' : 'btn-secondary'}
+                onClick={() => setStep(opt.value)}
+                title={opt.desc}
+              >
+                {opt.label}
+              </button>
             ))}
+          </div>
+          <div style={{ fontSize: 11, color: '#8a9099', marginTop: 6 }}>
+            {STEP_OPTIONS.find(o => o.value === step)?.desc}
           </div>
         </div>
       </div>
 
       <div className="prep-action-area">
         <div className="prep-action-desc">
-          <strong>{dbName}</strong> の Web ソースを pilot1 → pilot2 へ{mode === 'mirror' ? '差分ミラー' : '全量'}コピーします。
+          {step === 'both' && <><strong>{dbName}</strong> の Web ソースを pilot1 → pilot2 へコピーし、続けて SQL を適用します。</>}
+          {step === 'web' && <><strong>{dbName}</strong> の Web ソースを pilot1 → pilot2 へコピーします（SQL適用は行いません）。</>}
+          {step === 'sql' && <><strong>{dbName}</strong> の SQL を pilot 環境へ適用します（Webソースコピーは行いません）。</>}
         </div>
         {pageState === 'confirm' ? (
           <div style={{ display: 'flex', gap: 10 }}>
@@ -268,7 +286,7 @@ export default function WebSourcePrepare() {
             disabled={loading || !info}
             onClick={() => setPageState('confirm')}
           >
-            Web ソース配布を実行する
+            Pilot環境適用を実行する
             <svg width="13" height="13" viewBox="0 0 14 14" fill="none">
               <path d="M3 7h8M7.5 3.5L11 7l-3.5 3.5" stroke="#fff" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
             </svg>
@@ -280,7 +298,7 @@ export default function WebSourcePrepare() {
         <div style={{ marginTop: 12, padding: '10px 14px', background: '#fbf1dd', border: '1px solid #ece2cf', borderRadius: 7, fontSize: 12, color: '#7a6433', display: 'flex', gap: 8 }}>
           <span style={{ color: '#b25e09' }}>●</span>
           <span>
-            {dbName} の pilot1 → pilot2 へ{mode === 'mirror' ? '差分ミラー（削除同期あり）' : '全量'}コピーし、web.config の接続文字列を書き換えます。実行してよろしいですか？
+            {dbName} に対して「{STEP_OPTIONS.find(o => o.value === step)?.label}」を実行します。実行してよろしいですか？
           </span>
         </div>
       )}

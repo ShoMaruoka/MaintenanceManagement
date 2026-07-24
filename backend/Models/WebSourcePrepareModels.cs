@@ -15,7 +15,8 @@ public class WebSourceInfoResponse
 
 public class WebSourceDeployRequest
 {
-    /// <summary>"mirror"（差分ミラー、削除同期あり） | "full"（全量コピー、削除同期なし）</summary>
-    public string Mode { get; set; } = "mirror";
     public string ExecutedBy { get; set; } = "";
+
+    /// <summary>実行内容。"both"（既定）/ "web"（Webソースコピーのみ）/ "sql"（SQL適用のみ）。</summary>
+    public string Step { get; set; } = "both";
 }

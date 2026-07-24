@@ -17,7 +17,7 @@ const PAGE_TITLES: Record<string, { title: string; path: string }> = {
   '/deploy':       { title: 'STG 適用',      path: '/ deploy' },
   '/images':       { title: '画像情報準備',   path: '/ images' },
   '/prepare':      { title: '本番前準備',     path: '/ prepare' },
-  '/web-source':   { title: 'Webソース配布',  path: '/ web-source' },
+  '/web-source':   { title: 'Pilot環境適用',  path: '/ web-source' },
   '/history':      { title: '実行履歴',       path: '/ history' },
   '/admin/users':  { title: 'ユーザー管理',   path: '/ admin / users' },
 }
