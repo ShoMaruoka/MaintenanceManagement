@@ -12,7 +12,12 @@ public class WebSourceDeployService
     /// <summary>robocopy の既定除外ファイルパターン（Plan Task 12 で設定可能化予定）。</summary>
     private static readonly string[] DefaultExcludeFiles = ["*.tmp", "*.log", "*.user"];
 
-    /// <summary>robocopy の既定除外ディレクトリ名（Plan Task 12 で設定可能化予定）。</summary>
+    /// <summary>
+    /// robocopy の既定除外ディレクトリ名（Plan Task 12 で設定可能化予定）。
+    /// "bin\obj" は "bin" 配下にネストした "obj" フォルダ（例: bin\Debug\obj ではなく bin\obj 構成）を指す。
+    /// robocopy の /XD はディレクトリ名（パス階層は問わない）でマッチするため、単独の "obj" 指定と合わせて
+    /// 通常の "bin" 配下 "obj" フォルダはどちらの条件でも除外される。
+    /// </summary>
     private static readonly string[] DefaultExcludeDirs = [".vs", "obj", "bin\\obj"];
 
     private readonly bool _dryRun;
@@ -108,9 +113,33 @@ public class WebSourceDeployService
         proc.Start();
         proc.BeginOutputReadLine();
         proc.BeginErrorReadLine();
-        await proc.WaitForExitAsync(ct);
+
+        try
+        {
+            await proc.WaitForExitAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            // キャンセル時に robocopy プロセスを残留させない。
+            // /MIR は削除同期を伴うため、プロセスが生き残ると部分的なミラー状態のまま
+            // 予期せず処理が続いてしまうリスクがある。
+            TryKillProcess(proc);
+            throw;
+        }
 
         return proc.ExitCode;
+    }
+
+    private static void TryKillProcess(Process proc)
+    {
+        try
+        {
+            if (!proc.HasExited) proc.Kill(entireProcessTree: true);
+        }
+        catch
+        {
+            // ベストエフォート。Kill 自体の失敗でキャンセル処理を止めない。
+        }
     }
 
     private static string BuildArguments(string src, string dest, string modeFlag)
@@ -130,11 +159,20 @@ public class WebSourceDeployService
     /// （"/>" → " />"）や XML 宣言への encoding 属性付与など、対象外の箇所まで書式を変えてしまう
     /// （検証で確認済み）。そのため XmlReader で対象行番号と旧値のみを特定し、元テキストの該当行を
     /// 文字列置換する方式にして、connectionStrings 以外の書式を一切変えないようにしている。
+    ///
+    /// dryRun=true の場合はファイルを一切書き換えない（存在チェックと対象特定のみ行う）。
+    /// PilotConnectionStrings に定義された name が web.config 側で1件も見つからない場合、
+    /// 「置換したつもりでSTGの接続先が残る」事故を避けるため例外を送出する（未ヒットが1件でもあれば失敗）。
+    /// 一部ヒット・一部未ヒットの場合はファイルへの書き込みを行わず例外を送出する（部分適用を避ける）。
     /// </summary>
-    public static void ReplaceConnectionStrings(string webConfigPath, List<PilotConnectionString> pilotConnectionStrings)
+    /// <returns>置換した件数。</returns>
+    public static int ReplaceConnectionStrings(string webConfigPath, List<PilotConnectionString> pilotConnectionStrings, bool dryRun)
     {
         if (!File.Exists(webConfigPath))
             throw new FileNotFoundException($"web.config が見つかりません: {webConfigPath}", webConfigPath);
+
+        if (pilotConnectionStrings.Count == 0)
+            return 0;
 
         // Encoding.UTF8 は BOM の有無に関わらず GetPreamble() が常に BOM を返すため、
         // 元ファイルに BOM が無い場合でも書き込み時に BOM が付いてしまう。
@@ -147,11 +185,17 @@ public class WebSourceDeployService
             : Encoding.UTF8.GetString(fileBytes);
 
         var lines = rawText.Split('\n');
+        var unmatchedNames = new List<string>();
+        var replacedCount = 0;
 
         foreach (var pcs in pilotConnectionStrings)
         {
             var (lineIndex, oldValue) = FindActiveConnectionStringLine(webConfigPath, pcs.Name);
-            if (lineIndex < 0) continue; // 未定義の name は変更しない（STG の値を維持）
+            if (lineIndex < 0)
+            {
+                unmatchedNames.Add(pcs.Name);
+                continue;
+            }
 
             var oldAttr = $"connectionString=\"{EscapeXmlAttribute(oldValue)}\"";
             var newAttr = $"connectionString=\"{EscapeXmlAttribute(pcs.ConnectionString)}\"";
@@ -161,9 +205,18 @@ public class WebSourceDeployService
                     $"web.config の {lineIndex + 1} 行目で connectionString 属性の位置特定に失敗しました（name={pcs.Name}）: {webConfigPath}");
 
             lines[lineIndex] = lines[lineIndex].Replace(oldAttr, newAttr, StringComparison.Ordinal);
+            replacedCount++;
         }
 
+        if (unmatchedNames.Count > 0)
+            throw new InvalidOperationException(
+                $"web.config に該当する connectionStrings/add が見つかりません（name={string.Join(", ", unmatchedNames)}）: {webConfigPath}");
+
+        if (dryRun)
+            return replacedCount; // ファイルは書き換えない
+
         File.WriteAllText(webConfigPath, string.Join('\n', lines), encoding);
+        return replacedCount;
     }
 
     /// <summary>
@@ -256,8 +309,9 @@ public class WebSourceDeployService
                 LogLine("OK", $"{target.Name}: robocopy コピー完了 (exit code {exitCode})");
 
                 var webConfigPath = Path.Combine(target.DestWebSourcePath, "web.config");
-                ReplaceConnectionStrings(webConfigPath, config.PilotConnectionStrings);
-                LogLine("OK", $"{target.Name}: web.config の接続文字列を置換しました");
+                var dryRunTag = _dryRun ? " [DRY-RUN]" : "";
+                var replacedCount = ReplaceConnectionStrings(webConfigPath, config.PilotConnectionStrings, _dryRun);
+                LogLine("OK", $"{target.Name}: web.config の接続文字列を{replacedCount}件置換しました{dryRunTag}");
 
                 results.Add(new WebSourceDeployTargetResult(target.Name, true, null));
             }
