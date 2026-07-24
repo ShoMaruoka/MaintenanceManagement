@@ -52,6 +52,19 @@ public class DatabaseService
                 DisplayName TEXT NOT NULL,
                 CreatedAt   TEXT NOT NULL DEFAULT (datetime('now'))
             );
+            CREATE TABLE IF NOT EXISTS WebSourceDeployLog (
+                LogId      INTEGER PRIMARY KEY AUTOINCREMENT,
+                RunId      TEXT NOT NULL,
+                DbName     TEXT NOT NULL,
+                TargetName TEXT NOT NULL,
+                Mode       TEXT NOT NULL,
+                ExecutedBy TEXT NOT NULL,
+                ExecutedAt TEXT NOT NULL,
+                Result     TEXT NOT NULL,
+                LogDetail  TEXT
+            );
+            CREATE INDEX IF NOT EXISTS IX_WebSourceDeployLog_DbName_ExecutedAt
+                ON WebSourceDeployLog (DbName, ExecutedAt DESC);
             """;
         cmd.ExecuteNonQuery();
 
@@ -177,6 +190,26 @@ public class DatabaseService
         cmd.Parameters.AddWithValue("$executedAt", DateTime.UtcNow.ToString("o"));
         cmd.Parameters.AddWithValue("$appliedFiles", appliedFiles);
         cmd.Parameters.AddWithValue("$heldFiles", heldFiles);
+        cmd.Parameters.AddWithValue("$result", result);
+        cmd.Parameters.AddWithValue("$logDetail", logDetail ?? (object)DBNull.Value);
+        return (long)(cmd.ExecuteScalar() ?? 0);
+    }
+
+    public long InsertWebSourceDeployLog(string runId, string dbName, string targetName, string mode, string executedBy, string result, string? logDetail)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO WebSourceDeployLog (RunId, DbName, TargetName, Mode, ExecutedBy, ExecutedAt, Result, LogDetail)
+            VALUES ($runId, $dbName, $targetName, $mode, $executedBy, $executedAt, $result, $logDetail);
+            SELECT last_insert_rowid();
+            """;
+        cmd.Parameters.AddWithValue("$runId", runId);
+        cmd.Parameters.AddWithValue("$dbName", dbName);
+        cmd.Parameters.AddWithValue("$targetName", targetName);
+        cmd.Parameters.AddWithValue("$mode", mode);
+        cmd.Parameters.AddWithValue("$executedBy", executedBy);
+        cmd.Parameters.AddWithValue("$executedAt", DateTime.UtcNow.ToString("o"));
         cmd.Parameters.AddWithValue("$result", result);
         cmd.Parameters.AddWithValue("$logDetail", logDetail ?? (object)DBNull.Value);
         return (long)(cmd.ExecuteScalar() ?? 0);
