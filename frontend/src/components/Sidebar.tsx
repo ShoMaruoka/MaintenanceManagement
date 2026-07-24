@@ -47,6 +47,17 @@ const NAV_ITEMS = [
     ),
   },
   {
+    to: '/web-source',
+    label: 'Webソース配布',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <rect x="1.5" y="3" width="5.5" height="10" rx="1.2" stroke="currentColor" strokeWidth="1.4"/>
+        <rect x="9" y="3" width="5.5" height="10" rx="1.2" stroke="currentColor" strokeWidth="1.4"/>
+        <path d="M6.7 8h2.6M7.8 6.9L9 8l-1.2 1.1" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    ),
+  },
+  {
     to: '/history',
     label: '実行履歴',
     icon: (
