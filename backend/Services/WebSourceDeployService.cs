@@ -9,11 +9,15 @@ namespace MaintenanceManagement.Api.Services;
 /// <summary>STG → pilot サーバーへの Web ソース配布（Issue #25）。</summary>
 public class WebSourceDeployService
 {
-    /// <summary>robocopy の既定除外ファイルパターン（Plan Task 12 で設定可能化予定）。</summary>
+    /// <summary>
+    /// robocopy の既定除外ファイルパターン。"WebSourceDeploy:ExcludeFiles" が appsettings.json に
+    /// 設定されていればそちらを優先し、未設定時はこの既定値を使う。
+    /// </summary>
     private static readonly string[] DefaultExcludeFiles = ["*.tmp", "*.log", "*.user"];
 
     /// <summary>
-    /// robocopy の既定除外ディレクトリ名（Plan Task 12 で設定可能化予定）。
+    /// robocopy の既定除外ディレクトリ名。"WebSourceDeploy:ExcludeDirs" が appsettings.json に
+    /// 設定されていればそちらを優先し、未設定時はこの既定値を使う。
     /// "bin\obj" は "bin" 配下にネストした "obj" フォルダ（例: bin\Debug\obj ではなく bin\obj 構成）を指す。
     /// robocopy の /XD はディレクトリ名（パス階層は問わない）でマッチするため、単独の "obj" 指定と合わせて
     /// 通常の "bin" 配下 "obj" フォルダはどちらの条件でも除外される。
@@ -22,11 +26,18 @@ public class WebSourceDeployService
 
     private readonly bool _dryRun;
     private readonly ILogger<WebSourceDeployService> _logger;
+    private readonly string[] _excludeFiles;
+    private readonly string[] _excludeDirs;
 
     public WebSourceDeployService(IConfiguration config, ILogger<WebSourceDeployService> logger)
     {
         _dryRun = config.GetValue<bool>("DryRun");
         _logger = logger;
+
+        var configuredExcludeFiles = config.GetSection("WebSourceDeploy:ExcludeFiles").Get<string[]>();
+        var configuredExcludeDirs = config.GetSection("WebSourceDeploy:ExcludeDirs").Get<string[]>();
+        _excludeFiles = configuredExcludeFiles is { Length: > 0 } ? configuredExcludeFiles : DefaultExcludeFiles;
+        _excludeDirs = configuredExcludeDirs is { Length: > 0 } ? configuredExcludeDirs : DefaultExcludeDirs;
     }
 
     /// <summary>
@@ -142,10 +153,10 @@ public class WebSourceDeployService
         }
     }
 
-    private static string BuildArguments(string src, string dest, string modeFlag)
+    private string BuildArguments(string src, string dest, string modeFlag)
     {
-        var excludeFiles = string.Join(" ", DefaultExcludeFiles.Select(f => $"\"{f}\""));
-        var excludeDirs = string.Join(" ", DefaultExcludeDirs.Select(d => $"\"{d}\""));
+        var excludeFiles = string.Join(" ", _excludeFiles.Select(f => $"\"{f}\""));
+        var excludeDirs = string.Join(" ", _excludeDirs.Select(d => $"\"{d}\""));
         return $"\"{src}\" \"{dest}\" {modeFlag} /MT:8 /R:2 /W:5 /NP " +
                $"/XF {excludeFiles} /XD {excludeDirs}";
     }

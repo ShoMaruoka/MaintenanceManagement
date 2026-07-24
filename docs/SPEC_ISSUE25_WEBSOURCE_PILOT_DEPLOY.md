@@ -157,8 +157,8 @@ kaiosとgosで「どちらがコメントアウトされているか」が入れ
 
 ## 9. Open Questions
 
-1. pilot1・pilot2サーバーの公開フォルダパスに、本アプリのサーバーから到達可能なUNCパスは存在するか？（`\\pilot1server\...`, `\\pilot2server\...` 形式でアクセス可能か要確認）
-2. robocopyの除外パターン（`/XF`, `/XD`）のデフォルト値（`.vs`, `obj/`, ログファイル等）は何にするか？
-3. アプリケーションプール停止・起動（pilot1・pilot2側IIS再起動）は本機能のスコープに含めるか、対象外（別途手動）か？
-4. `PilotConnectionStrings`の値そのもの（パスワード等の機密情報）を`appsettings.json`に平文で置くことの可否。既存の`DbConfigs`内の扱いに準拠するか、Secret管理を別途検討するか？
-5. pilot1適用は成功したがpilot2適用でエラーになった場合、pilot1は成功済みのまま残してよいか（ロールバックは不要という理解でよいか）？
+1. **未解決（運用担当確認要）**: pilot1・pilot2サーバーの公開フォルダパスに、本アプリのサーバーから到達可能なUNCパスは存在するか？（`\\pilot1server\...`, `\\pilot2server\...` 形式でアクセス可能か要確認）。実サーバーでの`info`/`stream`目視確認とあわせて確認する。
+2. **解決済み（Task 12）**: robocopyの除外パターン（`/XF`, `/XD`）は`appsettings.json`の`WebSourceDeploy:ExcludeFiles`/`WebSourceDeploy:ExcludeDirs`で設定可能とし、未設定時のデフォルトは`*.tmp`/`*.log`/`*.user`（ファイル）、`.vs`/`obj`/`bin\obj`（ディレクトリ）とした。
+3. **未解決（運用担当確認要）**: アプリケーションプール停止・起動（pilot1・pilot2側IIS再起動）は本機能のスコープに含めるか、対象外（別途手動）か？現状の実装はrobocopy＋web.config書き換えのみで、IIS再起動は行わない。
+4. **未解決（運用担当確認要）**: `PilotConnectionStrings`の値そのもの（パスワード等の機密情報）を`appsettings.json`に平文で置くことの可否。現状は既存の`DbConfigs`内の扱いに準拠し平文としている。
+5. **未解決（運用担当確認要、暫定方針あり）**: pilot1適用は成功したがpilot2適用でエラーになった場合、pilot1は成功済みのまま残してよいか（ロールバックは不要という理解でよいか）？現在の実装は、pilot1失敗時にpilot2をスキップする（Task 13で動作確認済み）が、逆にpilot1成功・pilot2失敗時のpilot1側ロールバックは実装していない（部分適用状態が残る）。運用上ロールバックが必要な場合は追加タスク化が必要。
