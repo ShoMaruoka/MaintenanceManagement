@@ -100,7 +100,7 @@ export default function WebSourcePrepare() {
       // ストリームが done/error を送らずに終了した場合（Backend側の想定外切断等）に備え、
       // 実行中のまま残留しないよう失敗扱いへ遷移させる
       if (!completed) {
-        handleError(new Error('サーバーからの完了通知を受信できませんでした。実行結果を履歴で確認してください。'))
+        handleError(new Error('サーバーからの完了通知を受信できませんでした。pilot サーバーの状態を直接確認してください。'))
       }
     } catch (err) {
       if (!completed) {
