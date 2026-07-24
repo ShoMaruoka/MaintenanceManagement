@@ -11,13 +11,13 @@ public class WebSourceDeployService
 {
     /// <summary>
     /// robocopy の既定除外ファイルパターン。"WebSourceDeploy:ExcludeFiles" が appsettings.json に
-    /// 設定されていればそちらを優先し、未設定時はこの既定値を使う。
+    /// 設定されていればそちらを優先し、未設定または空配列の場合はこの既定値を使う。
     /// </summary>
     private static readonly string[] DefaultExcludeFiles = ["*.tmp", "*.log", "*.user"];
 
     /// <summary>
     /// robocopy の既定除外ディレクトリ名。"WebSourceDeploy:ExcludeDirs" が appsettings.json に
-    /// 設定されていればそちらを優先し、未設定時はこの既定値を使う。
+    /// 設定されていればそちらを優先し、未設定または空配列の場合はこの既定値を使う。
     /// "bin\obj" は "bin" 配下にネストした "obj" フォルダ（例: bin\Debug\obj ではなく bin\obj 構成）を指す。
     /// robocopy の /XD はディレクトリ名（パス階層は問わない）でマッチするため、単独の "obj" 指定と合わせて
     /// 通常の "bin" 配下 "obj" フォルダはどちらの条件でも除外される。
