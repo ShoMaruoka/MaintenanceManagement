@@ -8,7 +8,7 @@ using MaintenanceManagement.Api.Services;
 
 namespace MaintenanceManagement.Api.Controllers;
 
-/// <summary>STG → pilot サーバーへの Web ソース配布（Issue #25）。</summary>
+/// <summary>STG → pilot サーバーへの Pilot環境適用（Web ソースコピー＋SQL適用、Issue #25）。</summary>
 [ApiController]
 [Route("api/web-source-prepare")]
 public class WebSourcePrepareController : ControllerBase
@@ -106,7 +106,11 @@ public class WebSourcePrepareController : ControllerBase
                     sqlDeploy.Success ? "success" : "failed", sqlDeploy.ErrorMessage);
             }
 
-            var overallSuccess = results.Count > 0 && results.All(r => r.Success) && (sqlDeploy is null || sqlDeploy.Success);
+            // step=sql（Webソースコピーを行わない）の場合、results は常に空リストのため
+            // 「results.Count > 0」を必須にすると SQL 単体成功時でも失敗扱いになってしまう。
+            var webOk = step == WebSourceDeployStep.SqlOnly || (results.Count > 0 && results.All(r => r.Success));
+            var sqlOk = sqlDeploy is null || sqlDeploy.Success;
+            var overallSuccess = webOk && sqlOk;
             var doneJson = JsonSerializer.Serialize(new
             {
                 type = "done",

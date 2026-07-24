@@ -334,7 +334,11 @@ public class WebSourceDeployService
         using var proc = new Process();
         proc.StartInfo = new ProcessStartInfo
         {
-            FileName = batPath,
+            FileName = "cmd.exe",
+            // .bat は UseShellExecute=false のまま FileName に直接指定しても起動できないため、
+            // cmd.exe /c 経由で起動する（DeployService.RunBatAsync と同じパターン）。
+            // chcp 932 を先行実行し、bat およびその子プロセスが Shift-JIS で動作するようにする。
+            Arguments = $"/c \"chcp 932 > nul && \"{batPath}\"\"",
             WorkingDirectory = workingDirectory,
             UseShellExecute = false,
             CreateNoWindow = true,
