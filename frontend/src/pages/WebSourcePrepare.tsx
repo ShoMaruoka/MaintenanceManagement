@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import type { LogLine } from '../types'
 import {
   getWebSourceInfo,
@@ -34,17 +34,23 @@ export default function WebSourcePrepare() {
   const [currentTarget, setCurrentTarget] = useState<string>('')
   const [result, setResult] = useState<ApiWebSourceDeployDone | null>(null)
 
+  // info取得のレース対策: 最後に発行したリクエストの世代のみ反映する
+  const infoRequestSeq = useRef(0)
+
   const loadInfo = useCallback(async (target: WebSourceDbName) => {
+    const seq = ++infoRequestSeq.current
     try {
       setLoading(true)
       setError('')
       const data = await getWebSourceInfo(target)
+      if (seq !== infoRequestSeq.current) return
       setInfo(data)
     } catch (err) {
+      if (seq !== infoRequestSeq.current) return
       setError((err as Error).message)
       setInfo(null)
     } finally {
-      setLoading(false)
+      if (seq === infoRequestSeq.current) setLoading(false)
     }
   }, [])
 
@@ -54,8 +60,8 @@ export default function WebSourcePrepare() {
 
   function handleLog(line: LogLine) {
     setLogLines(prev => [...prev, line])
-    // "{targetName} 適用開始" 形式のログから現在処理中ターゲットを推定
-    const match = info?.pilotTargets.find(t => line.message.includes(t.name))
+    // "▶ {targetName} 適用開始" 形式のログから現在処理中ターゲットを推定
+    const match = info?.pilotTargets.find(t => line.message.includes(`${t.name} 適用開始`))
     if (match) setCurrentTarget(match.name)
   }
 
@@ -76,14 +82,31 @@ export default function WebSourcePrepare() {
     setResult(null)
     setError('')
 
-    await startWebSourceDeploy(
-      dbName,
-      mode,
-      currentUser ?? 'unknown',
-      handleLog,
-      handleDone,
-      handleError,
-    )
+    let completed = false
+    const markDone = (fn: () => void) => {
+      completed = true
+      fn()
+    }
+
+    try {
+      await startWebSourceDeploy(
+        dbName,
+        mode,
+        currentUser ?? 'unknown',
+        handleLog,
+        (doneResult) => markDone(() => handleDone(doneResult)),
+        (err) => markDone(() => handleError(err)),
+      )
+      // ストリームが done/error を送らずに終了した場合（Backend側の想定外切断等）に備え、
+      // 実行中のまま残留しないよう失敗扱いへ遷移させる
+      if (!completed) {
+        handleError(new Error('サーバーからの完了通知を受信できませんでした。実行結果を履歴で確認してください。'))
+      }
+    } catch (err) {
+      if (!completed) {
+        handleError(err instanceof Error ? err : new Error(String(err)))
+      }
+    }
   }
 
   function backToSelect() {
