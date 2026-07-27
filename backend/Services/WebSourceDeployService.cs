@@ -745,11 +745,14 @@ public class WebSourceDeployService
 
     /// <summary>
     /// SQL 適用ログのうち "WARN:" で始まる行は WARN レベルで出す（robocopy の DETAIL に埋もれないようにする）。
+    /// レベル昇格時はメッセージ先頭の "WARN:" を落とし、UI 上で "[WARN] WARN: ..." と二重表示しない。
     /// </summary>
     private static void LogSqlDeployLine(Action<string, string> logLine, string message)
     {
-        var level = message.StartsWith("WARN:", StringComparison.Ordinal) ? "WARN" : "DETAIL";
-        logLine(level, message);
+        if (message.StartsWith("WARN:", StringComparison.Ordinal))
+            logLine("WARN", message["WARN:".Length..].TrimStart());
+        else
+            logLine("DETAIL", message);
     }
 }
 
