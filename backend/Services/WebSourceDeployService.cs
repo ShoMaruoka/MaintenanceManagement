@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using System.Xml;
 using MaintenanceManagement.Api.Models;
@@ -171,7 +172,8 @@ public class WebSourceDeployService
         var excludeDirs = string.Join(" ", _excludeDirs.Select(d => $"\"{d}\""));
         // /XX: コピー先にのみ存在する「余分な」ファイル・フォルダを対象外とする。
         // /MIR を使わない（削除同期をしない）運用のため、*EXTRA の検出・ログ出力自体が不要なログノイズになる。
-        return $"\"{src}\" \"{dest}\" /E /MT:8 /R:2 /W:5 /NP /XX " +
+        // /MT:32: 共通画像など小サイズ・大量ファイルの UNC コピー向け（robocopy の上限は 128。Issue #27）。
+        return $"\"{src}\" \"{dest}\" /E /MT:32 /R:2 /W:5 /NP /XX " +
                $"/XF {excludeFiles} /XD {excludeDirs}";
     }
 
@@ -320,6 +322,22 @@ public class WebSourceDeployService
         if (!IsRobocopySuccess(copyExitCode))
             return new WebSourceSqlDeployResult(false, copyExitCode, $"SQL コピーが robocopy エラー終了しました (exit code {copyExitCode})");
 
+        // View ソース内の DB 名置換（Issue #27）。実書き込みはコピー先 Source のみ。
+        // DryRun 時は robocopy が実コピーしないため、プレビューは Deploy2PrdPath を走査する
+        // （dryRun=true なので Deploy2PrdPath 自体は書き換えない）。
+        if (config.PilotSqlDbNameReplacements.Count > 0)
+        {
+            var replaceDir = _dryRun ? config.Deploy2PrdPath : sourceDir;
+            var (fileCount, occurrenceCount) = ReplaceViewDbNames(
+                replaceDir, config.PilotSqlDbNameReplacements, _dryRun, onOutputLine);
+            var dryRunTag = _dryRun ? " [DRY-RUN]" : "";
+            onOutputLine($"View DB名置換: {fileCount} ファイル / {occurrenceCount} 箇所{dryRunTag}");
+        }
+        else
+        {
+            onOutputLine("View DB名置換: スキップ（PilotSqlDbNameReplacements 未設定）");
+        }
+
         if (_dryRun)
         {
             onOutputLine($"[DRY-RUN] deploy.bat 実行: {config.PilotSqlDeployBatPath}");
@@ -334,6 +352,107 @@ public class WebSourceDeployService
             return new WebSourceSqlDeployResult(false, batExitCode, $"deploy.bat がエラー終了しました (exit code {batExitCode})");
 
         return new WebSourceSqlDeployResult(true, batExitCode, null);
+    }
+
+    /// <summary>
+    /// CREATE/ALTER VIEW を含む .sql のみを対象に、DB 名参照を置換する（Issue #27）。
+    /// 単語境界付き・大文字小文字無視で From を To に置換し、KaiosDB_pilot / KaiosDB2 等は対象外。
+    /// 既定エンコーディングは Shift-JIS。UTF-8/UTF-16 の BOM がある場合はそのエンコーディングを維持する。
+    /// </summary>
+    /// <returns>置換したファイル数と箇所数。</returns>
+    public static (int FileCount, int OccurrenceCount) ReplaceViewDbNames(
+        string sourceDir,
+        List<PilotDbNameReplacement> rules,
+        bool dryRun,
+        Action<string>? onOutputLine = null)
+    {
+        if (string.IsNullOrWhiteSpace(sourceDir) || !Directory.Exists(sourceDir) || rules.Count == 0)
+            return (0, 0);
+
+        var activeRules = rules
+            .Where(r => !string.IsNullOrWhiteSpace(r.From) && !string.IsNullOrWhiteSpace(r.To))
+            .ToList();
+        if (activeRules.Count == 0)
+            return (0, 0);
+
+        var fileCount = 0;
+        var occurrenceCount = 0;
+
+        foreach (var filePath in Directory.EnumerateFiles(sourceDir, "*.sql", SearchOption.AllDirectories))
+        {
+            var (encoding, text) = ReadSqlFilePreservingEncoding(filePath);
+            if (!IsViewDefinition(text))
+                continue;
+
+            var replaced = text;
+            var fileOccurrences = 0;
+            foreach (var rule in activeRules)
+            {
+                var pattern = $@"(?<![A-Za-z0-9_]){Regex.Escape(rule.From)}(?![A-Za-z0-9_])";
+                var matches = Regex.Matches(replaced, pattern, RegexOptions.IgnoreCase);
+                if (matches.Count == 0)
+                    continue;
+                fileOccurrences += matches.Count;
+                replaced = Regex.Replace(replaced, pattern, rule.To, RegexOptions.IgnoreCase);
+            }
+
+            if (fileOccurrences == 0)
+                continue;
+
+            fileCount++;
+            occurrenceCount += fileOccurrences;
+            onOutputLine?.Invoke(
+                dryRun
+                    ? $"[DRY-RUN] View DB名置換予定: {Path.GetFileName(filePath)} ({fileOccurrences} 箇所)"
+                    : $"View DB名置換: {Path.GetFileName(filePath)} ({fileOccurrences} 箇所)");
+
+            if (!dryRun)
+                File.WriteAllText(filePath, replaced, encoding);
+        }
+
+        return (fileCount, occurrenceCount);
+    }
+
+    /// <summary>CREATE VIEW / ALTER VIEW / CREATE OR ALTER VIEW（空白・大文字小文字の揺れを許容）。</summary>
+    internal static bool IsViewDefinition(string sql) =>
+        ViewDefinitionRegex.IsMatch(sql);
+
+    private static readonly Regex ViewDefinitionRegex = new(
+        @"\bCREATE\s+(OR\s+ALTER\s+)?VIEW\b|\bALTER\s+VIEW\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
+    /// <summary>
+    /// SQL ファイルを読み、書き戻し用の Encoding を返す。
+    /// UTF-8 BOM / UTF-16 LE・BE BOM を検出し、それ以外は Shift-JIS として扱う。
+    /// </summary>
+    private static (Encoding Encoding, string Text) ReadSqlFilePreservingEncoding(string path)
+    {
+        var bytes = File.ReadAllBytes(path);
+
+        // UTF-8 BOM
+        if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+        {
+            var enc = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
+            return (enc, enc.GetString(bytes, 3, bytes.Length - 3));
+        }
+
+        // UTF-16 LE BOM
+        if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
+        {
+            var enc = new UnicodeEncoding(bigEndian: false, byteOrderMark: true);
+            return (enc, enc.GetString(bytes, 2, bytes.Length - 2));
+        }
+
+        // UTF-16 BE BOM
+        if (bytes.Length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF)
+        {
+            var enc = new UnicodeEncoding(bigEndian: true, byteOrderMark: true);
+            return (enc, enc.GetString(bytes, 2, bytes.Length - 2));
+        }
+
+        // 既定: Shift-JIS（DeployService の SQL 読み書きと同じ）
+        var sjis = Encoding.GetEncoding("shift_jis");
+        return (sjis, sjis.GetString(bytes));
     }
 
     private static async Task<int> RunDeployBatAsync(
@@ -485,6 +604,31 @@ public class WebSourceDeployService
                     }
 
                     LogLine("OK", $"{target.Name}: Files コピー完了 (exit code {filesExitCode})");
+                }
+
+                // 共通画像フォルダ → pilot の Images\products（Issue #27）。
+                // Files コピーの後に実行し、重複時は共通画像側を後勝ちとする。
+                if (string.IsNullOrWhiteSpace(config.CommonImagePath) || string.IsNullOrWhiteSpace(target.DestImagePath))
+                {
+                    LogLine("INFO", $"{target.Name}: 画像コピーをスキップ（CommonImagePath または DestImagePath が未設定）");
+                }
+                else
+                {
+                    LogLine("STEP", $"▶ {target.Name} 画像コピー開始");
+                    var imageExitCode = await RunRobocopyAsync(
+                        config.CommonImagePath,
+                        target.DestImagePath,
+                        line => LogLine("DETAIL", line),
+                        ct);
+
+                    if (!IsRobocopySuccess(imageExitCode))
+                    {
+                        LogLine("ERROR", $"{target.Name}: 画像コピーが robocopy エラー終了しました (exit code {imageExitCode})");
+                        results.Add(new WebSourceDeployTargetResult(target.Name, false, $"画像コピー robocopy exit code {imageExitCode}"));
+                        break;
+                    }
+
+                    LogLine("OK", $"{target.Name}: 画像コピー完了 (exit code {imageExitCode})");
                 }
 
                 var webConfigPath = Path.Combine(target.DestWebSourcePath, "web.config");

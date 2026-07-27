@@ -6,11 +6,13 @@ export type WebSourceDbName = 'kaios' | 'gos'
 export interface ApiWebSourcePilotTargetInfo {
   name: string
   destWebSourcePath: string
+  destImagePath: string
 }
 
 export interface ApiWebSourceInfo {
   dbName: string
   webSourcePath: string
+  commonImagePath: string
   pilotTargets: ApiWebSourcePilotTargetInfo[]
 }
 

@@ -4,12 +4,16 @@ public class WebSourcePilotTargetInfo
 {
     public string Name { get; set; } = "";
     public string DestWebSourcePath { get; set; } = "";
+    /// <summary>共通画像のコピー先。未設定時は空文字。</summary>
+    public string DestImagePath { get; set; } = "";
 }
 
 public class WebSourceInfoResponse
 {
     public string DbName { get; set; } = "";
     public string WebSourcePath { get; set; } = "";
+    /// <summary>STG 側の共通画像フォルダ。未設定時は空文字。</summary>
+    public string CommonImagePath { get; set; } = "";
     public List<WebSourcePilotTargetInfo> PilotTargets { get; set; } = [];
 }
 

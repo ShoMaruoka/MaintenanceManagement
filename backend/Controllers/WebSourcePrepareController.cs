@@ -50,8 +50,14 @@ public class WebSourcePrepareController : ControllerBase
         {
             DbName = config.Name,
             WebSourcePath = config.WebSourcePath,
+            CommonImagePath = config.CommonImagePath,
             PilotTargets = config.PilotTargets
-                .Select(t => new WebSourcePilotTargetInfo { Name = t.Name, DestWebSourcePath = t.DestWebSourcePath })
+                .Select(t => new WebSourcePilotTargetInfo
+                {
+                    Name = t.Name,
+                    DestWebSourcePath = t.DestWebSourcePath,
+                    DestImagePath = t.DestImagePath,
+                })
                 .ToList(),
         };
         return Ok(response);
