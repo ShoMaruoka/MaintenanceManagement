@@ -165,7 +165,9 @@ ORDER BY TABLE_NAME;
    - 通常: D:\STGENV\{DB}_rep\{Type}\{Name}.sql → Deploy_DEV2STG\ForNewCreation\Source\
    - 新規の場合: ALTER → CREATE に置換
    - 削除の場合: DROP {Type} [dbo].[{Name}] の SQL を生成
-   - Table / UserDefinedTableType: コピー不要（Git マージのみ）
+   - Table / UserDefinedTableType: STG/本番へは自動適用しない（Git マージのみ）。
+     Git 上の定義 SQL を Source\deployed_manual\ へ退避し、manifest.jsonl に
+     手動適用待ちとして記録する（本番前準備画面での確認対象になる）
 5. deploy.bat を Process.Start で実行
 6. 適用済みファイルを Source\deployed\ に移動
 7. 各ステップのログを SSE でストリーミング配信
@@ -182,6 +184,7 @@ ORDER BY TABLE_NAME;
 1. deployed/ と deployed_hold/ 内のファイル一覧を取得・表示
    - deployed/ → デフォルト全選択
    - deployed_hold/ → デフォルト全未選択
+   - deployed_manual/（Table / UDTT の手動適用待ち）→ デフォルト全未選択
 2. ユーザーが適用・除外を選択
 3. 確認ダイアログ表示 → 実行
 
@@ -200,14 +203,24 @@ ORDER BY TABLE_NAME;
      FastCopy.exe /cmd=diff
        from: Deploy_DEV2STG\MariaDB\deployed\{選択ファイル}
        to:   UseAtProductionUpdate\2_Deploy_STG2PRD\MariaDB\
+
+  D. 手動適用（Table / UDTT）のうちチェック済みのものを消化:
+     - 定義 SQL → UseAtProductionUpdate\2_Deploy_STG2PRD\ManualApply\ へコピー
+     - deployed_manual\ から削除し、manifest.jsonl からも除去
+     - 未チェックの項目はそのまま残し、次回の本番前準備にも表示する
+     - 未確認が残る場合は完了ログに WARN を出力
 ```
 
 **フォルダ構成（追加）:**
 ```
 Deploy_DEV2STG\ForNewCreation\Source\
   ├─ deployed\           # STG適用後のファイル（本番前準備の対象）
-  └─ deployed_hold\      # 保留中ファイル（次回の本番前準備まで待機）
+  ├─ deployed_hold\      # 保留中ファイル（次回の本番前準備まで待機）
+  └─ deployed_manual\    # Table / UDTT の手動適用待ち（manifest.jsonl でメタ情報を保持）
 ```
+
+`deployed_manual\` はサブフォルダのため `deploy.bat`（`Source\*.sql` を非再帰で処理）
+の対象にならず、Table / UDTT が自動適用される事故は起きない。
 
 ---
 
@@ -324,7 +337,9 @@ IIS サイト（ポート 80）
 ## 11. Boundaries（制約・ルール）
 
 ### Always（必ず守る）
-- Table・UserDefinedTableType は Git マージのみ。デプロイファイルのコピーは行わない
+- Table・UserDefinedTableType は Git マージのみ。deploy.bat の対象フォルダには置かない
+- Table・UserDefinedTableType は手動適用待ちとして記録し、本番前準備画面で確認・消化させる
+  （自動適用しない代わりに、確認漏れを検知できる状態を必ず保つ）
 - ファイル書き込みは SJIS(CP932) で行う（既存スクリプトとの互換性）
 - 実行前は必ず確認ダイアログを表示してから実行する
 - 複数 DB の実行は順次実行（並列実行しない）

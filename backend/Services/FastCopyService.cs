@@ -9,29 +9,34 @@ public class FastCopyService
     private readonly bool _dryRun;
     private readonly string _fastCopyExe;
     private readonly ImagePrepareService _imagePrepare;
+    private readonly ManualApplyService _manualApply;
     private readonly ILogger<FastCopyService> _logger;
 
     public FastCopyService(
         IConfiguration config,
         ImagePrepareService imagePrepare,
+        ManualApplyService manualApply,
         ILogger<FastCopyService> logger)
     {
         _dryRun = config.GetValue<bool>("DryRun");
         _fastCopyExe = config["FastCopyPath"] ?? @"C:\Program Files\FastCopy\FastCopy.exe";
         _imagePrepare = imagePrepare;
+        _manualApply = manualApply;
         _logger = logger;
     }
 
-    public async Task<(int applied, int held, string log)> ExecuteAsync(
+    public async Task<(int applied, int held, int manual, string log)> ExecuteAsync(
         List<DbConfig> allConfigs,
         List<PrepareSelection> selections,
         List<PrepareImageSelection> imageSelections,
+        List<PrepareManualSelection> manualSelections,
         ChannelWriter<LogEntry> writer,
         CancellationToken ct)
     {
         string dryRunTag = _dryRun ? " [DRY-RUN]" : "";
         int applied = 0;
         int held = 0;
+        int manual = 0;
         var logLines = new StringBuilder();
 
         void LogLine(string level, string msg)
@@ -49,9 +54,11 @@ public class FastCopyService
         LogLine("INFO", $"本番前準備を開始します{dryRunTag}");
 
         imageSelections ??= [];
+        manualSelections ??= [];
 
         var dbNames = selections.Select(s => s.DbName)
             .Concat(imageSelections.Select(s => s.DbName))
+            .Concat(manualSelections.Select(s => s.DbName))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
@@ -191,10 +198,45 @@ public class FastCopyService
                     applied++;
                 }
             }
+
+            // 手動適用（Table / UDTT）の消化。未選択の項目は次回まで待機リストに残す。
+            var dbManualSelections = manualSelections
+                .Where(s => s.DbName.Equals(dbName, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+
+            if (dbManualSelections.Any(s => s.Apply))
+            {
+                var consumed = _manualApply.Consume(config, dbManualSelections, LogLine);
+                if (consumed > 0)
+                    LogLine("INFO", $"  手動適用 確認済み: {consumed} 件 → ManualApply{dryRunTag}");
+                manual += consumed;
+            }
         }
 
-        LogLine("OK", $"✅ 本番前準備が完了しました  適用: {applied} 件  保留: {held} 件");
-        return (applied, held, logLines.ToString());
+        var pendingManual = CountPendingManual(allConfigs, manualSelections);
+
+        LogLine("OK", $"✅ 本番前準備が完了しました  適用: {applied} 件  保留: {held} 件  手動適用確認: {manual} 件");
+        if (pendingManual > 0)
+            LogLine("WARN", $"⚠ 手動適用が未確認のまま残っています: {pendingManual} 件（Table / UDTT）");
+
+        return (applied, held, manual, logLines.ToString());
+    }
+
+    /// <summary>未確認のまま持ち越された手動適用項目の件数。DRY-RUN では消化が発生しないため 0 を返す。</summary>
+    private int CountPendingManual(
+        List<DbConfig> allConfigs,
+        List<PrepareManualSelection> manualSelections)
+    {
+        if (_dryRun) return 0;
+
+        var total = 0;
+        foreach (var dbName in manualSelections.Select(s => s.DbName).Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var config = allConfigs.FirstOrDefault(c => c.Name.Equals(dbName, StringComparison.OrdinalIgnoreCase));
+            if (config is null) continue;
+            total += _manualApply.List(config).Count;
+        }
+        return total;
     }
 
     /// <summary>

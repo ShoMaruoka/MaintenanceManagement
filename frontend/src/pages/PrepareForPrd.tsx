@@ -3,7 +3,9 @@ import type { DbName, LogLine } from '../types'
 import {
   getPrepareFiles,
   startPrepare,
+  type ApiManualApplyItem,
   type ApiPrepareImageSelection,
+  type ApiPrepareManualSelection,
   type ApiPrepareSelection,
 } from '../api/prepare'
 import { useUser } from '../context/UserContext'
@@ -24,6 +26,7 @@ interface DbEntry {
   dbName: DbName
   files: PrepareFile[]
   imageFiles: string[]
+  manualItems: ApiManualApplyItem[]
 }
 
 function fileKey(dbName: DbName, file: PrepareFile) {
@@ -32,6 +35,26 @@ function fileKey(dbName: DbName, file: PrepareFile) {
 
 function imageKey(dbName: DbName, relativePath: string) {
   return `${dbName}::image::${relativePath}`
+}
+
+function manualKey(dbName: DbName, item: ApiManualApplyItem) {
+  return `${dbName}::manual::${item.moduleType}::${item.moduleName}`
+}
+
+function manualTypeLabel(moduleType: string) {
+  return moduleType === 'UserDefinedTableType' ? 'UDTT' : 'Table'
+}
+
+/** STG 適用日時（ISO 8601 相当）を MM-DD HH:mm に丸める。空・不正値は空文字。 */
+function formatStgApplied(value: string) {
+  if (!value) return ''
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return ''
+  const mm = String(parsed.getMonth() + 1).padStart(2, '0')
+  const dd = String(parsed.getDate()).padStart(2, '0')
+  const hh = String(parsed.getHours()).padStart(2, '0')
+  const mi = String(parsed.getMinutes()).padStart(2, '0')
+  return `${mm}-${dd} ${hh}:${mi}`
 }
 
 export default function PrepareForPrd() {
@@ -50,10 +73,10 @@ export default function PrepareForPrd() {
       setError('')
       const entries = await getPrepareFiles()
       const dbMap: Record<DbName, DbEntry> = {
-        kaios: { dbName: 'kaios', files: [], imageFiles: [] },
-        gos: { dbName: 'gos', files: [], imageFiles: [] },
-        paf: { dbName: 'paf', files: [], imageFiles: [] },
-        duskin: { dbName: 'duskin', files: [], imageFiles: [] },
+        kaios: { dbName: 'kaios', files: [], imageFiles: [], manualItems: [] },
+        gos: { dbName: 'gos', files: [], imageFiles: [], manualItems: [] },
+        paf: { dbName: 'paf', files: [], imageFiles: [], manualItems: [] },
+        duskin: { dbName: 'duskin', files: [], imageFiles: [], manualItems: [] },
       }
 
       entries.forEach(entry => {
@@ -64,6 +87,7 @@ export default function PrepareForPrd() {
             dbType: f.dbType,
           }))
           dbMap[entry.dbName].imageFiles = entry.imageFiles ?? []
+          dbMap[entry.dbName].manualItems = entry.manualItems ?? []
         }
       })
 
@@ -80,6 +104,7 @@ export default function PrepareForPrd() {
         db.imageFiles.forEach(path => {
           initial.add(imageKey(db.dbName, path))
         })
+        // 手動適用は本番での作業実施を人が確認して初めてチェックするため、既定は未選択
       })
       setChecked(initial)
     } catch (err) {
@@ -130,9 +155,31 @@ export default function PrepareForPrd() {
     })
   }
 
-  const { totalSqlChecked, totalImageChecked, totalChecked } = useMemo(() => {
+  function toggleAllManual(dbName: DbName, toCheck: boolean) {
+    const db = dbEntries.find(d => d.dbName === dbName)
+    if (!db) return
+    setChecked(prev => {
+      const next = new Set(prev)
+      db.manualItems.forEach(item => {
+        const k = manualKey(dbName, item)
+        if (toCheck) next.add(k)
+        else next.delete(k)
+      })
+      return next
+    })
+  }
+
+  const {
+    totalSqlChecked,
+    totalImageChecked,
+    totalManualChecked,
+    totalManualPending,
+    totalChecked,
+  } = useMemo(() => {
     let sql = 0
     let images = 0
+    let manual = 0
+    let manualPending = 0
     dbEntries.forEach(db => {
       db.files.forEach(f => {
         if (checked.has(fileKey(db.dbName, f))) sql++
@@ -140,11 +187,17 @@ export default function PrepareForPrd() {
       db.imageFiles.forEach(path => {
         if (checked.has(imageKey(db.dbName, path))) images++
       })
+      db.manualItems.forEach(item => {
+        if (checked.has(manualKey(db.dbName, item))) manual++
+        else manualPending++
+      })
     })
     return {
       totalSqlChecked: sql,
       totalImageChecked: images,
-      totalChecked: sql + images,
+      totalManualChecked: manual,
+      totalManualPending: manualPending,
+      totalChecked: sql + images + manual,
     }
   }, [checked, dbEntries])
 
@@ -154,6 +207,7 @@ export default function PrepareForPrd() {
 
     const selections: ApiPrepareSelection[] = []
     const imageSelections: ApiPrepareImageSelection[] = []
+    const manualSelections: ApiPrepareManualSelection[] = []
     dbEntries.forEach(db => {
       db.files.forEach(f => {
         const k = fileKey(db.dbName, f)
@@ -172,6 +226,14 @@ export default function PrepareForPrd() {
           apply: checked.has(imageKey(db.dbName, path)),
         })
       })
+      db.manualItems.forEach(item => {
+        manualSelections.push({
+          dbName: db.dbName,
+          moduleType: item.moduleType,
+          moduleName: item.moduleName,
+          apply: checked.has(manualKey(db.dbName, item)),
+        })
+      })
     })
 
     const handleLog = (line: LogLine) => {
@@ -185,6 +247,7 @@ export default function PrepareForPrd() {
     await startPrepare(
       selections,
       imageSelections,
+      manualSelections,
       currentUser ?? 'unknown',
       handleLog,
       handleDone,
@@ -264,6 +327,7 @@ export default function PrepareForPrd() {
         <span style={{ fontFamily: "'JetBrains Mono', monospace", color: '#3a3f46' }}>deployed_hold/</span>{' '}
         へ移動して次回まで保留されます。
         画像ファイル（Files）も同様に選択し、本番フォルダへ移動できます。
+        Table / UserDefinedTableType は自動デプロイ対象外のため、本番 DB へ手動適用したことを確認する項目として表示します。
       </div>
 
       <button
@@ -283,11 +347,13 @@ export default function PrepareForPrd() {
           const deployedCheckedCount = deployedFiles.filter(f => checked.has(fileKey(db.dbName, f))).length
           const holdCheckedCount     = holdFiles.filter(f => checked.has(fileKey(db.dbName, f))).length
           const imageCheckedCount    = db.imageFiles.filter(p => checked.has(imageKey(db.dbName, p))).length
+          const manualCheckedCount   = db.manualItems.filter(i => checked.has(manualKey(db.dbName, i))).length
           const allDeployedChecked   = deployedFiles.length > 0 && deployedCheckedCount === deployedFiles.length
           const allHoldChecked       = holdFiles.length > 0 && holdCheckedCount === holdFiles.length
           const allImagesChecked     = db.imageFiles.length > 0 && imageCheckedCount === db.imageFiles.length
-          const totalItems = db.files.length + db.imageFiles.length
-          const totalCheckedInDb = deployedCheckedCount + holdCheckedCount + imageCheckedCount
+          const allManualChecked     = db.manualItems.length > 0 && manualCheckedCount === db.manualItems.length
+          const totalItems = db.files.length + db.imageFiles.length + db.manualItems.length
+          const totalCheckedInDb = deployedCheckedCount + holdCheckedCount + imageCheckedCount + manualCheckedCount
           const hasAny = totalItems > 0
 
           return (
@@ -305,8 +371,62 @@ export default function PrepareForPrd() {
                 </div>
               ) : (
                 <div className="prep-db-files">
+                  {/* 本番へ手動適用が必要 セクション（Table / UserDefinedTableType） */}
+                  {db.manualItems.length > 0 && (
+                    <>
+                      <div className="prep-section-header">
+                        <span className="prep-section-label prep-section-label-manual">
+                          本番へ手動適用が必要（{manualCheckedCount}/{db.manualItems.length}）
+                        </span>
+                        {db.manualItems.length > 1 && (
+                          <button
+                            className="prep-toggle-all-btn"
+                            onClick={() => toggleAllManual(db.dbName, !allManualChecked)}
+                          >
+                            {allManualChecked ? '全解除' : '全選択'}
+                          </button>
+                        )}
+                      </div>
+                      <div className="prep-manual-note">
+                        Table / UDTT は自動デプロイされません。本番 DB へ SSMS で適用したものだけをチェックしてください。
+                      </div>
+                      {db.manualItems.map(item => {
+                        const k = manualKey(db.dbName, item)
+                        const isChecked = checked.has(k)
+                        const stgApplied = formatStgApplied(item.stgAppliedAt)
+                        return (
+                          <div
+                            key={k}
+                            className={`prep-file-item prep-file-item-selectable prep-file-item-manual${isChecked ? ' selected' : ''}`}
+                            onClick={() => toggle(k)}
+                            title={item.fileName
+                              ? `deployed_manual/${item.fileName}`
+                              : 'Git に定義 SQL がありません'}
+                          >
+                            <span className={`checkbox${isChecked ? ' checked' : ''}`} style={{ width: 13, height: 13, minWidth: 13, borderRadius: 3 }}>
+                              {isChecked && (
+                                <svg width="8" height="8" viewBox="0 0 10 10">
+                                  <path d="M1.5 5.2l2.2 2.3L8.5 2.5" stroke="#fff" strokeWidth="1.6" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                                </svg>
+                              )}
+                            </span>
+                            <span className="prep-file-name">{item.moduleName}</span>
+                            {stgApplied && (
+                              <span className="prep-manual-meta">STG {stgApplied}</span>
+                            )}
+                            <span className="prep-manual-badge">{item.opType}</span>
+                            <span className="prep-file-db-badge">{manualTypeLabel(item.moduleType)}</span>
+                          </div>
+                        )
+                      })}
+                    </>
+                  )}
+
                   {/* 今回適用する セクション */}
-                  <div className="prep-section-header">
+                  <div
+                    className="prep-section-header"
+                    style={db.manualItems.length > 0 ? { marginTop: 10 } : undefined}
+                  >
                     <span className="prep-section-label prep-section-label-apply">今回適用する（SQL）</span>
                     {deployedFiles.length > 1 && (
                       <button
@@ -428,8 +548,8 @@ export default function PrepareForPrd() {
 
       <div className="prep-action-area">
         <div className="prep-action-desc">
-          <strong>計 {totalChecked} ファイル</strong>
-          {' '}（SQL {totalSqlChecked} / 画像 {totalImageChecked}）を本番適用フォルダへコピー・移動します。
+          <strong>計 {totalChecked} 件</strong>
+          {' '}（SQL {totalSqlChecked} / 画像 {totalImageChecked} / 手動適用 {totalManualChecked}）を本番適用フォルダへコピー・移動します。
           {(() => {
             let holdCount = 0
             dbEntries.forEach(db => {
@@ -465,8 +585,25 @@ export default function PrepareForPrd() {
         <div style={{ marginTop: 12, padding: '10px 14px', background: '#fbf1dd', border: '1px solid #ece2cf', borderRadius: 7, fontSize: 12, color: '#7a6433', display: 'flex', gap: 8 }}>
           <span style={{ color: '#b25e09' }}>●</span>
           <span>
-            選択した SQL {totalSqlChecked} 件・画像 {totalImageChecked} 件（合計 {totalChecked}）を本番フォルダへコピー／移動します。
-            未選択の deployed/ SQL は deployed_hold/ へ移動されます。実行してよろしいですか？
+            選択した SQL {totalSqlChecked} 件・画像 {totalImageChecked} 件・手動適用 {totalManualChecked} 件（合計 {totalChecked}）を本番フォルダへコピー／移動します。
+            未選択の deployed/ SQL は deployed_hold/ へ移動されます。
+            {totalManualPending > 0 && (
+              <>
+                {' '}
+                <strong>手動適用が未確認の Table / UDTT が {totalManualPending} 件残ります。</strong>
+              </>
+            )}
+            実行してよろしいですか？
+          </span>
+        </div>
+      )}
+
+      {totalManualPending > 0 && (
+        <div className="prep-manual-warning">
+          <span>⚠</span>
+          <span>
+            本番へ手動適用が必要な Table / UDTT が <strong>{totalManualPending} 件</strong> 未確認です。
+            本番 DB へ適用したものはチェックして消化してください。未チェックの項目は次回の本番前準備にも表示され続けます。
           </span>
         </div>
       )}

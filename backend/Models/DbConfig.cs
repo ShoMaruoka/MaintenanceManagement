@@ -30,6 +30,18 @@ public class DbConfig
     public string DeploySourcePath => Path.Combine(ForNewCreationPath, "Source");
     public string DeployedPath => Path.Combine(DeploySourcePath, "deployed");
     public string DeployedHoldPath => Path.Combine(DeploySourcePath, "deployed_hold");
+
+    /// <summary>
+    /// Table / UserDefinedTableType の手動適用待ち置き場。
+    /// deploy.bat は Source\*.sql を非再帰で拾うため、サブフォルダに置くことで自動適用を防ぐ。
+    /// </summary>
+    public string DeployedManualPath => Path.Combine(DeploySourcePath, "deployed_manual");
+
+    /// <summary>手動適用待ち項目のメタ情報（1 行 1 JSON）。</summary>
+    public string DeployedManualManifestPath => Path.Combine(DeployedManualPath, "manifest.jsonl");
+
+    /// <summary>手動適用対象 SQL の本番受け渡し先。本番側 deploy.bat の対象外となるサブフォルダ。</summary>
+    public string ManualApplyDeploy2PrdPath => Path.Combine(Deploy2PrdPath, "ManualApply");
     public string MariaDbSourcePath => Path.Combine(DeployDev2StgPath, "MariaDB");
     public string MariaDbDeployedPath => Path.Combine(MariaDbSourcePath, "deployed");
     public string MariaDbDeployedHoldPath => Path.Combine(MariaDbSourcePath, "deployed_hold");

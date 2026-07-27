@@ -9,16 +9,18 @@ public class DeployService
 {
     private readonly bool _dryRun;
     private readonly ILogger<DeployService> _logger;
+    private readonly ManualApplyService _manualApply;
 
     private static readonly HashSet<string> GitOnlyTypes =
-        new(["Table", "UserDefinedTableType"], StringComparer.OrdinalIgnoreCase);
+        new(ManualApplyService.ManualApplyTypes, StringComparer.OrdinalIgnoreCase);
 
     // DB ごとの実行中フラグ（重複リクエスト防止）
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> _dbLocks = new();
 
-    public DeployService(IConfiguration config, ILogger<DeployService> logger)
+    public DeployService(IConfiguration config, ManualApplyService manualApply, ILogger<DeployService> logger)
     {
         _dryRun = config.GetValue<bool>("DryRun");
+        _manualApply = manualApply;
         _logger = logger;
     }
 
@@ -79,6 +81,8 @@ public class DeployService
             if (gitOnlyModules.Count > 0)
                 await Log(writer, "INFO", $"Git マージのみ対象: {string.Join(", ", gitOnlyModules.Select(m => m.Name))}");
             await Step3_GitMerge(writer, dbConfig, request, dryRunTag, ct);
+            if (gitOnlyModules.Count > 0)
+                await Step3b_RegisterManualApply(writer, dbConfig, gitOnlyModules, executedBy, dryRunTag);
             await Log(writer, "OK", $"merge 完了  ({request.Modules.Count} files changed)", stepDone: "merge");
 
             // Step 4: SQL convert
@@ -166,6 +170,29 @@ public class DeployService
             return;
         }
         await RunBatAsync(w, batPath, config.MergePath, ct);
+    }
+
+    /// <summary>
+    /// Git マージのみのモジュール（Table / UDTT）を手動適用待ちとして登録する。
+    /// 自動デプロイはしないが、本番前準備画面に確認対象として残すことで適用漏れを防ぐ。
+    /// </summary>
+    private async Task Step3b_RegisterManualApply(
+        ChannelWriter<LogEntry> w,
+        DbConfig config,
+        List<DeployModule> gitOnlyModules,
+        string executedBy,
+        string tag)
+    {
+        var logs = new List<(string Level, string Message)>();
+        var items = _manualApply.Register(
+            config, gitOnlyModules, executedBy, (level, message) => logs.Add((level, message)));
+
+        foreach (var (level, message) in logs)
+            await Log(w, level, message);
+
+        await Log(w, "INFO", $"手動適用待ちに登録: {items.Count} 件（本番前準備画面で確認）{tag}");
+        foreach (var item in items)
+            await Log(w, "DETAIL", $"→ {item.ModuleType}/{item.ModuleName}  [{item.OpType}] deployed_manual/{tag}");
     }
 
     private async Task Step4_SqlConvert(ChannelWriter<LogEntry> w, DbConfig config, List<DeployModule> modules, string tag)

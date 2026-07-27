@@ -97,6 +97,7 @@
 | `GitRepoPath` | git 操作対象リポジトリ | bat 実行時エラー |
 | `DeployDev2StgPath/ForNewCreation/Source/deployed/` | 本番前準備のコピー元 | ファイル 0 件として表示される |
 | `DeployDev2StgPath/ForNewCreation/Source/deployed_hold/` | 保留ファイル一覧 | ファイル 0 件として表示される |
+| `DeployDev2StgPath/ForNewCreation/Source/deployed_manual/` | Table / UDTT の手動適用待ち一覧 | 0 件として表示される |
 
 ### 1-5. 設定ファイル全体サンプル（DryRun + ローカル SQL Server）
 
@@ -241,7 +242,9 @@ npm run dev
 | 2. deployed/ フォルダにファイルなし | 各セクションの「今回適用する」が「(0 件)」表示 |
 | 3. deployed/ にテスト用 .sql ファイルを配置した場合 | バックエンドを再起動後、ファイルが一覧に表示され、デフォルトで全選択状態になる |
 | 4. deployed_hold/ にファイルを配置した場合 | 「保留中」セクションに表示され、デフォルト未選択状態 |
-| 5. 「実行」ボタンを押す | SSE ログが流れ、DryRun モードなら `[DRY-RUN]` 付きでファイルコピーがシミュレートされる |
+| 5. deployed_manual/ に manifest.jsonl を配置した場合 | 「本番へ手動適用が必要」セクションに表示され、デフォルト未選択。画面下部に未確認件数の警告が出る |
+| 6. 手動適用をチェックして実行 | 定義 SQL が `Deploy2PrdPath\ManualApply\` へコピーされ、`deployed_manual/` と manifest から消える。未チェック項目は残る |
+| 7. 「実行」ボタンを押す | SSE ログが流れ、DryRun モードなら `[DRY-RUN]` 付きでファイルコピーがシミュレートされる |
 
 **テスト用ファイル配置例（kaios の場合）**
 
@@ -252,6 +255,17 @@ D:\Tools\SourceControl\Deploy_DEV2STG\ForNewCreation\Source\deployed\
 
 D:\Tools\SourceControl\Deploy_DEV2STG\ForNewCreation\Source\deployed_hold\
   └── dbo.HoldSP.sql
+
+D:\Tools\SourceControl\Deploy_DEV2STG\ForNewCreation\Source\deployed_manual\
+  └── dbo.TestTable.sql
+  └── manifest.jsonl
+```
+
+`manifest.jsonl` は 1 行 1 JSON。`fileName` を空にすると「Git に定義 SQL が無い項目」として
+チェックのみで消化できる状態を再現できる。
+
+```json
+{"moduleType":"Table","moduleName":"TestTable","opType":"更新","stgAppliedAt":"2026-07-27T10:15:00","stgAppliedBy":"maruoka","fileName":"dbo.TestTable.sql"}
 ```
 
 ---

@@ -20,17 +20,20 @@ public class PrepareController : ControllerBase
     private readonly FastCopyService _fastCopy;
     private readonly DatabaseService _db;
     private readonly ImagePrepareService _imagePrepare;
+    private readonly ManualApplyService _manualApply;
     private readonly List<DbConfig> _dbConfigs;
 
     public PrepareController(
         FastCopyService fastCopy,
         DatabaseService db,
         ImagePrepareService imagePrepare,
+        ManualApplyService manualApply,
         IConfiguration config)
     {
         _fastCopy = fastCopy;
         _db = db;
         _imagePrepare = imagePrepare;
+        _manualApply = manualApply;
         _dbConfigs = config.GetSection("DbConfigs").Get<List<DbConfig>>() ?? [];
     }
 
@@ -48,6 +51,7 @@ public class PrepareController : ControllerBase
             entry.Files.AddRange(ReadFiles(config.MariaDbDeployedPath, "deployed", "mariadb"));
             entry.Files.AddRange(ReadFiles(config.MariaDbDeployedHoldPath, "hold", "mariadb"));
             entry.ImageFiles.AddRange(_imagePrepare.ListRelativeFilePaths(config));
+            entry.ManualItems.AddRange(_manualApply.List(config));
 
             result.Add(entry);
         }
@@ -70,15 +74,16 @@ public class PrepareController : ControllerBase
 
         try
         {
-            var (applied, held, logDetail) = await _fastCopy.ExecuteAsync(
-                _dbConfigs, request.Selections, request.ImageSelections, channel.Writer, ct);
+            var (applied, held, manual, logDetail) = await _fastCopy.ExecuteAsync(
+                _dbConfigs, request.Selections, request.ImageSelections, request.ManualSelections,
+                channel.Writer, ct);
 
             channel.Writer.Complete();
             await writeTask;
 
-            _db.InsertProductionReadyLog(executedBy, applied, held, "success", logDetail);
+            _db.InsertProductionReadyLog(executedBy, applied, held, manual, "success", logDetail);
 
-            var doneJson = JsonSerializer.Serialize(new { type = "done", applied, held }, _camelCase);
+            var doneJson = JsonSerializer.Serialize(new { type = "done", applied, held, manual }, _camelCase);
             await Response.Body.WriteAsync(Encoding.UTF8.GetBytes($"data: {doneJson}\n\n"), ct);
             await Response.Body.FlushAsync(ct);
         }
@@ -86,7 +91,7 @@ public class PrepareController : ControllerBase
         {
             channel.Writer.TryComplete(ex);
             await writeTask;
-            _db.InsertProductionReadyLog(executedBy, 0, 0, "failed", ex.Message);
+            _db.InsertProductionReadyLog(executedBy, 0, 0, 0, "failed", ex.Message);
         }
     }
 

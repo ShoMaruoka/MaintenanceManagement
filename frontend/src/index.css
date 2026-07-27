@@ -1401,6 +1401,61 @@ input {
   background: #eff6ff;
 }
 
+/* 手動適用（Table / UserDefinedTableType）— 自動デプロイされないため強調表示 */
+.prep-section-label-manual {
+  color: #a3341f;
+  background: #fdeae6;
+}
+
+.prep-manual-note {
+  font-size: 10px;
+  line-height: 1.5;
+  color: #a3341f;
+  background: #fdf3f1;
+  border: 1px solid #f5d9d2;
+  border-radius: 5px;
+  padding: 5px 8px;
+  margin: 0 0 5px;
+}
+
+.prep-file-item-manual {
+  background: #fdf8f7;
+}
+.prep-file-item-manual:hover { background: #fbeeeb; }
+.prep-file-item-manual.selected {
+  background: #f3f9f4;
+}
+
+.prep-manual-badge {
+  font-size: 9px;
+  font-weight: 700;
+  color: #a3341f;
+  background: #fdeae6;
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: .04em;
+  flex-shrink: 0;
+}
+
+.prep-manual-meta {
+  font-size: 9.5px;
+  color: #9aa0a8;
+  flex-shrink: 0;
+}
+
+.prep-manual-warning {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: #fdf3f1;
+  border: 1px solid #f2cfc7;
+  border-radius: 7px;
+  font-size: 12px;
+  color: #8f3b28;
+  display: flex;
+  gap: 8px;
+  line-height: 1.6;
+}
+
 .prep-toggle-all-btn {
   font-size: 10px;
   color: #6b7280;

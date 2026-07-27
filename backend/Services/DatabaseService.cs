@@ -85,6 +85,16 @@ public class DatabaseService
             alterLog.ExecuteNonQuery();
         }
         catch { /* 既にカラムが存在する場合は無視 */ }
+
+        // ManualFiles カラムが存在しない場合は追加（既存 DB の後方互換）
+        try
+        {
+            using var alterManual = conn.CreateCommand();
+            alterManual.CommandText =
+                "ALTER TABLE ProductionReadyLog ADD COLUMN ManualFiles INTEGER NOT NULL DEFAULT 0;";
+            alterManual.ExecuteNonQuery();
+        }
+        catch { /* 既にカラムが存在する場合は無視 */ }
     }
 
     public List<AppUser> GetAllUsers()
@@ -177,19 +187,21 @@ public class DatabaseService
         cmd.ExecuteNonQuery();
     }
 
-    public long InsertProductionReadyLog(string executedBy, int appliedFiles, int heldFiles, string result, string? logDetail)
+    public long InsertProductionReadyLog(
+        string executedBy, int appliedFiles, int heldFiles, int manualFiles, string result, string? logDetail)
     {
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            INSERT INTO ProductionReadyLog (ExecutedBy, ExecutedAt, AppliedFiles, HeldFiles, Result, LogDetail)
-            VALUES ($executedBy, $executedAt, $appliedFiles, $heldFiles, $result, $logDetail);
+            INSERT INTO ProductionReadyLog (ExecutedBy, ExecutedAt, AppliedFiles, HeldFiles, ManualFiles, Result, LogDetail)
+            VALUES ($executedBy, $executedAt, $appliedFiles, $heldFiles, $manualFiles, $result, $logDetail);
             SELECT last_insert_rowid();
             """;
         cmd.Parameters.AddWithValue("$executedBy", executedBy);
         cmd.Parameters.AddWithValue("$executedAt", DateTime.UtcNow.ToString("o"));
         cmd.Parameters.AddWithValue("$appliedFiles", appliedFiles);
         cmd.Parameters.AddWithValue("$heldFiles", heldFiles);
+        cmd.Parameters.AddWithValue("$manualFiles", manualFiles);
         cmd.Parameters.AddWithValue("$result", result);
         cmd.Parameters.AddWithValue("$logDetail", logDetail ?? (object)DBNull.Value);
         return (long)(cmd.ExecuteScalar() ?? 0);
@@ -327,7 +339,7 @@ public class DatabaseService
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT LogId, ExecutedBy, ExecutedAt, AppliedFiles, HeldFiles, Result, LogDetail
+            SELECT LogId, ExecutedBy, ExecutedAt, AppliedFiles, HeldFiles, Result, LogDetail, ManualFiles
             FROM ProductionReadyLog ORDER BY LogId DESC LIMIT $limit;
             """;
         cmd.Parameters.AddWithValue("$limit", limit);
@@ -345,6 +357,7 @@ public class DatabaseService
                 HeldFiles    = reader.GetInt32(4),
                 Result       = reader.GetString(5),
                 LogDetail    = reader.IsDBNull(6) ? null : reader.GetString(6),
+                ManualFiles  = reader.IsDBNull(7) ? 0 : reader.GetInt32(7),
             });
         }
         return logs;
