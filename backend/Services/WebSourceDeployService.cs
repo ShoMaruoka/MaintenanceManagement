@@ -49,9 +49,11 @@ public class WebSourceDeployService
     /// <summary>
     /// robocopy 実行前にコピー元・コピー先パスの安全性を検証する。
     /// WebSourcePath / PilotTarget.DestWebSourcePath は appsettings.json（信頼できる設定）由来だが、
-    /// 設定ミスによる事故（空文字・相対パス・ドライブルート指定・src=dest 一致）を防ぐガードとして
+    /// 設定ミスによる事故（空文字・相対パス・ローカルドライブルート指定・src=dest 一致）を防ぐガードとして
     /// PathSafety を用いる。特にドライブルート（例: "C:\"）を dest に指定すると誤操作でドライブ全体に
     /// 書き込みかねないため、明示的に拒否する。
+    /// 一方、UNC 共有ルート（例: "\\server\WWW_KAIOS_pilot"）は共有そのものが IIS Web ルートである
+    /// 運用があり得るため許可する。
     /// </summary>
     public static void ValidateDeployPaths(string src, string dest)
     {
@@ -70,14 +72,23 @@ public class WebSourceDeployService
         if (PathSafety.AreSamePath(srcFull, destFull))
             throw new InvalidOperationException($"コピー元とコピー先が同一パスです: {srcFull}");
 
-        if (IsDriveOrShareRoot(destFull))
+        if (IsLocalDriveRoot(destFull))
             throw new InvalidOperationException(
-                $"コピー先にドライブ/共有のルートは指定できません（誤操作によるフォルダ全消去を防止）: {destFull}");
+                $"コピー先にローカルドライブのルートは指定できません（誤操作によるドライブ全体への書き込みを防止）: {destFull}");
     }
 
-    /// <summary>dest がドライブルート（例: "C:\"）や共有ルート（例: "\\server\share"）そのものかを判定する。</summary>
-    private static bool IsDriveOrShareRoot(string fullPath) =>
-        Directory.GetParent(fullPath) is null;
+    /// <summary>
+    /// dest がローカルドライブルート（例: "C:\"）かどうかを判定する。
+    /// UNC 共有ルート（例: "\\server\share"）は Web ルートとして正当なコピー先になり得るため false。
+    /// </summary>
+    private static bool IsLocalDriveRoot(string fullPath)
+    {
+        if (fullPath.StartsWith(@"\\", StringComparison.Ordinal)
+            || fullPath.StartsWith("//", StringComparison.Ordinal))
+            return false;
+
+        return Directory.GetParent(fullPath) is null;
+    }
 
     /// <summary>
     /// robocopy を起動し、標準出力を1行ずつ <paramref name="onOutputLine"/> へ渡す。

@@ -82,7 +82,7 @@ kaios・gosのSTG公開フォルダを、robocopyでpilot1→pilot2の順に自�
   - **Estimated scope**: S（1ファイル）
 
 - [x] **Task 5: パス検証をrobocopy実行前に組み込み**
-  - **Description**: Task 4のメソッド呼び出し前に、コピー元（STG）・コピー先（pilot1/pilot2）パスの安全性を検証する `ValidateDeployPaths` を実装した。SPEC/実装レビューで確認したとおり、`WebSourcePath`/`PilotTarget.DestWebSourcePath` は appsettings.json（信頼できる設定）由来であり、ユーザー入力の相対パスをルート配下に閉じ込める従来の `PathSafety.IsUnderRoot` の用途とは異なる。代わりに **設定ミスによる事故防止ガード**（空文字・相対パス・src=dest一致・ドライブ/共有ルート指定の拒否）として `PathSafety.AreSamePath` 等を利用する実装とした（SPEC 3節・8節に追随済み）。
+  - **Description**: Task 4のメソッド呼び出し前に、コピー元（STG）・コピー先（pilot1/pilot2）パスの安全性を検証する `ValidateDeployPaths` を実装した。SPEC/実装レビューで確認したとおり、`WebSourcePath`/`PilotTarget.DestWebSourcePath` は appsettings.json（信頼できる設定）由来であり、ユーザー入力の相対パスをルート配下に閉じ込める従来の `PathSafety.IsUnderRoot` の用途とは異なる。代わりに **設定ミスによる事故防止ガード**（空文字・相対パス・src=dest一致・ローカルドライブルート指定の拒否。UNC共有ルートは共有＝Webルート運用のため許可）として `PathSafety.AreSamePath` 等を利用する実装とした（SPEC 3節・8節に追随済み）。
   - **Acceptance criteria**:
     - [x] コピー元・コピー先パスが不正な場合、robocopyを起動せず例外を投げる
     - [x] 正常なパスでは検証を通過する

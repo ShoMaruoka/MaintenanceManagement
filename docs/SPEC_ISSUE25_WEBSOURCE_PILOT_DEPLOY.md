@@ -46,7 +46,7 @@ STGサーバー上のIISアプリ公開フォルダ一式を、Git使用禁止�
 - [x] robocopyの終了コード0〜7は成功として扱い、8以上はエラーとしてログ・履歴に記録する
 - [x] pilot1適用でエラーが発生した場合、pilot2への適用は行わずに処理を中断する
 - [x] 実行結果はpilot1・pilot2それぞれについて、既存の`InsertProductionReadyLog`同様に履歴テーブルへ記録される（実装上は専用の`InsertWebSourceDeployLog`／`WebSourceDeployLog`テーブルとして、同一`RunId`で束ねて記録する）
-- [x] `PathSafety`を用いて、コピー元・コピー先（pilot1・pilot2それぞれ）パスの設定ミス（空文字・相対パス・src=dest一致・ドライブ/共有ルート指定）を検出し拒否する（7.3参照。ユーザー入力の相対パスをルート配下に閉じ込める従来のPathSafety用途とは異なり、信頼できる設定値に対する事故防止ガードとして用いる）
+- [x] `PathSafety`を用いて、コピー元・コピー先（pilot1・pilot2それぞれ）パスの設定ミス（空文字・相対パス・src=dest一致・ローカルドライブルート指定）を検出し拒否する。UNC共有ルート（例: `\\server\WWW_KAIOS_pilot`）は共有そのものがWebルートである運用を許可する（ユーザー入力の相対パスをルート配下に閉じ込める従来のPathSafety用途とは異なり、信頼できる設定値に対する事故防止ガードとして用いる）
 - [x] 除外対象（例: `bin/`直下の一時ファイル、`.vs`等）を設定可能にする
 - [x] `DryRun=true`の場合、robocopyコピーだけでなくweb.config接続文字列の置換も実ファイルへ書き込まない（ログにのみ「置換予定」を出力する）
 - [x] `PilotConnectionStrings`に定義された`name`が、コピー先web.configの`connectionStrings`内に1件も見つからない場合はエラーとして扱う（STGの接続文字列がpilotに残ったまま「成功」とならないようにする）
@@ -177,7 +177,7 @@ kaiosとgosで「どちらがコメントアウトされているか」が入れ
 
 ## 8. Boundaries
 
-- **Always**: robocopyは常に`/E`（全量コピー・削除同期なし）で実行し`/MIR`は使用しない（誤操作によるファイル削除事故防止）／robocopy実行前に`PathSafety`でコピー元・コピー先パスの設定ミス（空文字・相対パス・src=dest一致・ドライブ/共有ルート指定）を検証する／実行結果を履歴に記録する／web.config書き換えはXmlReaderで対象位置を特定した上での行単位テキスト置換とし、connectionStrings以外の書式・内容を変えない／`DryRun=true`時はrobocopy・web.config置換のどちらも実ファイルへ書き込まない／キャンセル時はrobocopyプロセスをKillして残留させない／【追加】`PilotSqlDeployPath\Source`はコピー前に毎回空にしてから全量コピーする（古いSQLの残留防止）／【追加】`deploy.bat`は本システムで作成・自動生成しない（ユーザー側の事前配置を前提とする）／【追加】SQL適用結果はWebソースコピー結果と独立して記録し、Webソースコピーが失敗した場合はSQL適用ステップ自体を実行しない
+- **Always**: robocopyは常に`/E`（全量コピー・削除同期なし）で実行し`/MIR`は使用しない（誤操作によるファイル削除事故防止）／robocopy実行前に`PathSafety`でコピー元・コピー先パスの設定ミス（空文字・相対パス・src=dest一致・ローカルドライブルート指定）を検証する（UNC共有ルートはWebルート運用のため許可）／実行結果を履歴に記録する／web.config書き換えはXmlReaderで対象位置を特定した上での行単位テキスト置換とし、connectionStrings以外の書式・内容を変えない／`DryRun=true`時はrobocopy・web.config置換のどちらも実ファイルへ書き込まない／キャンセル時はrobocopyプロセスをKillして残留させない／【追加】`PilotSqlDeployPath\Source`はコピー前に毎回空にしてから全量コピーする（古いSQLの残留防止）／【追加】`deploy.bat`は本システムで作成・自動生成しない（ユーザー側の事前配置を前提とする）／【追加】SQL適用結果はWebソースコピー結果と独立して記録し、Webソースコピーが失敗した場合はSQL適用ステップ自体を実行しない
 - **Ask first**: 除外パターンのデフォルトリスト決定、pilotサーバーへの接続方式（UNCパス到達性の確認）、robocopyの並列数(`/MT`)のデフォルト値、【追加】`deploy.bat`の実行に必要な権限・認証情報（SQL Server接続情報等）は`deploy.bat`側で保持する前提でよいか
 - **Never**: web.configの`connectionStrings`以外のセクションを自動変更しない／robocopy未インストール環境へのフォールバックとして`File.Copy`を無断で使わない（robocopyはWindows標準のため通常不要だが、非搭載環境の扱いは要確認）／`PilotConnectionStrings`のnameが1件でも未ヒットの場合は書き込みを行わない（部分適用の禁止）／【追加】`deploy.bat`の内容を本システムが生成・書き換えることはしない
 
