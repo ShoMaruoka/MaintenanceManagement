@@ -55,6 +55,16 @@ public class DbConfig
 
     /// <summary>PilotSqlDeployPath 配下の適用バッチ（事前配置・本システムは作成しない）。</summary>
     public string PilotSqlDeployBatPath => Path.Combine(PilotSqlDeployPath, "deploy.bat");
+
+    // 画像コピー・View DB 名置換（Issue #27）
+    /// <summary>STG 側の共通画像フォルダ（コピー元）。未設定時は画像コピーステップをスキップする。</summary>
+    public string CommonImagePath { get; set; } = "";
+
+    /// <summary>
+    /// pilot 向け SQL 適用時に View ソース内の DB 名を置換するルール一覧。
+    /// 未設定（空）の場合は置換ステップ自体をスキップする。
+    /// </summary>
+    public List<PilotDbNameReplacement> PilotSqlDbNameReplacements { get; set; } = [];
 }
 
 /// <summary>pilot サーバー1台分の適用先情報。</summary>
@@ -63,6 +73,8 @@ public class PilotTarget
     public string Name { get; set; } = "";
     /// <summary>コピー先パス（DbConfig.WebSourcePath=STG側と混同しないよう Dest を付与）。</summary>
     public string DestWebSourcePath { get; set; } = "";
+    /// <summary>共通画像のコピー先（例: ...\Images\products）。未設定時は画像コピーステップをスキップする。</summary>
+    public string DestImagePath { get; set; } = "";
 }
 
 /// <summary>pilot 側 web.config の connectionStrings 置換値。</summary>
@@ -70,4 +82,11 @@ public class PilotConnectionString
 {
     public string Name { get; set; } = "";
     public string ConnectionString { get; set; } = "";
+}
+
+/// <summary>pilot 向け SQL 適用時の View ソース内 DB 名置換ルール（例: KaiosDB → KaiosDB_pilot）。</summary>
+public class PilotDbNameReplacement
+{
+    public string From { get; set; } = "";
+    public string To { get; set; } = "";
 }

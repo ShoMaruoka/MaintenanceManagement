@@ -213,8 +213,9 @@ export default function WebSourcePrepare() {
     <div>
       <div style={{ marginBottom: 16, fontSize: 12, color: '#6b7280', lineHeight: 1.6 }}>
         STG サーバーの Web ソース（公開フォルダ）を pilot1 → pilot2 の順に自動でコピーします（削除同期なしの全量コピーのみ）。
-        コピー完了後に各 pilot 側 web.config の接続文字列を書き換えます。pilot1 が失敗した場合、pilot2 は実行されません。
-        すべて成功した場合、続けて SQL ファイルの pilot 環境への適用（コピー＋deploy.bat実行）を行います。
+        続けて共通画像フォルダを各 pilot の Images\products へコピーし、各 pilot 側 web.config の接続文字列を書き換えます。
+        pilot1 が失敗した場合、pilot2 は実行されません。
+        すべて成功した場合、続けて SQL ファイルの pilot 環境への適用（コピー＋View DB名置換＋deploy.bat実行）を行います。
       </div>
 
       <div style={{ background: '#fff', border: '1px solid #e4e6ea', borderRadius: 8, padding: '16px 18px', marginBottom: 14 }}>
@@ -242,8 +243,14 @@ export default function WebSourcePrepare() {
             <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>コピー元・コピー先</div>
             <div style={{ fontSize: 11.5, fontFamily: "'JetBrains Mono', monospace", background: '#f6f7f9', borderRadius: 6, padding: '10px 12px', lineHeight: 1.9 }}>
               <div>STG: {info.webSourcePath}</div>
+              <div>共通画像: {info.commonImagePath || '未設定（スキップ）'}</div>
               {info.pilotTargets.map(t => (
-                <div key={t.name}>{t.name}: {t.destWebSourcePath}</div>
+                <div key={t.name}>
+                  <div>{t.name}: {t.destWebSourcePath}</div>
+                  <div style={{ paddingLeft: 12, color: '#6b7280' }}>
+                    画像: {t.destImagePath || '未設定（スキップ）'}
+                  </div>
+                </div>
               ))}
             </div>
           </div>
