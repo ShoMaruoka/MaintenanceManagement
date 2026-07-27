@@ -182,11 +182,12 @@ kaios / gos とも同じ1件のルールを設定する。
 5. **書き換えるのはコピー先（`PilotSqlDeployPath\Source`）のみ**。コピー元（`Deploy2PrdPath`）や
    Git リポジトリのソースは一切変更しない
 6. 文字コード・改行コードは元ファイルの状態を維持する
-   - 既定は Shift-JIS（既存 `DeployService` の SQL 読み書きと同一）
-   - UTF-8 BOM / UTF-16 BOM を検出した場合はそのエンコーディングで読み書きし、BOM の有無も再現する
+   - BOM あり: UTF-8 / UTF-16 LE・BE を検出し、同じエンコーディングで書き戻す
+   - BOM なし: Shift-JIS → UTF-8（BOMなし）の順でラウンドトリップ検証し、元バイト列を再現できる方を採用する
+   - どちらでも再現できない場合は置換せず警告ログを出してスキップする（無自覚な文字化け書き戻しを防ぐ）
 7. `DryRun=true` のときはファイルへ書き込まず、「置換予定」としてログにのみ出力する。
    DryRun では robocopy が Source へ実コピーしないため、プレビューの走査対象は `Deploy2PrdPath` とする
-   （書き込みは行わない。本番実行時の書き込み対象は常に `PilotSqlDeployPath\Source`）
+   （書き込みは行わない。本番実行時の書き込み対象は常に `PilotSqlDeployPath\Source`。走査対象ディレクトリはログに出力する）
 
 ## データフロー（Issue #25 からの差分を【追加】で表記）
 
@@ -239,8 +240,9 @@ POST /api/web-source-prepare/{dbName}/stream
 - [x] 大文字小文字の表記ゆれもヒットし、置換後は設定値の表記に統一される
 - [x] 置換対象が 0 件でも正常として続行し、置換ファイル数・箇所数がログに出る
 - [x] コピー元 `Deploy2PrdPath` および Git リポジトリのファイルは変更されない
-- [x] 元ファイルの文字コード（既定 Shift-JIS、BOM 付きの場合はその状態）と改行が維持される
-- [x] `DryRun=true` のとき書き込まず、置換予定のみログ出力される（プレビュー走査は `Deploy2PrdPath`。実書き込みは常に `Source` のみ）
+- [x] 元ファイルの文字コード（BOM ありは維持、BOM なしは SJIS→UTF-8 のラウンドトリップ検証。判定不可はスキップ＋警告）と改行が維持される
+- [x] `DryRun=true` のとき書き込まず、置換予定のみログ出力される（プレビュー走査は `Deploy2PrdPath`。走査対象ディレクトリをログ出力。実書き込みは常に `Source` のみ）
+- [x] エンコーディング判定不可でスキップした件数はサマリに含め、WARN レベルで目立つようにする（robocopy DETAIL に埋もれない）
 - [x] kaios / gos のどちらの適用でも同じルール（`KaiosDB` → `KaiosDB_pilot`）で置換される
 - [x] gos の適用時、`GosDB` は置換されない
 - [x] `PilotSqlDbNameReplacements` 未設定のとき、置換ステップは行われず従来どおり適用される

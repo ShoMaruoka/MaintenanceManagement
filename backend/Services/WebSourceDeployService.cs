@@ -328,10 +328,13 @@ public class WebSourceDeployService
         if (config.PilotSqlDbNameReplacements.Count > 0)
         {
             var replaceDir = _dryRun ? config.Deploy2PrdPath : sourceDir;
-            var (fileCount, occurrenceCount) = ReplaceViewDbNames(
+            onOutputLine($"View DB名置換: 走査対象={replaceDir}{(_dryRun ? "（DryRunプレビュー）" : "")}");
+            var (fileCount, occurrenceCount, skippedCount) = ReplaceViewDbNames(
                 replaceDir, config.PilotSqlDbNameReplacements, _dryRun, onOutputLine);
             var dryRunTag = _dryRun ? " [DRY-RUN]" : "";
-            onOutputLine($"View DB名置換: {fileCount} ファイル / {occurrenceCount} 箇所{dryRunTag}");
+            onOutputLine($"View DB名置換: {fileCount} ファイル / {occurrenceCount} 箇所 / スキップ {skippedCount} 件{dryRunTag}");
+            if (skippedCount > 0)
+                onOutputLine($"WARN: View DB名置換で {skippedCount} 件スキップしました（エンコーディング判定不可）。該当 View は KaiosDB 参照のまま残る可能性があります");
         }
         else
         {
@@ -357,30 +360,46 @@ public class WebSourceDeployService
     /// <summary>
     /// CREATE/ALTER VIEW を含む .sql のみを対象に、DB 名参照を置換する（Issue #27）。
     /// 単語境界付き・大文字小文字無視で From を To に置換し、KaiosDB_pilot / KaiosDB2 等は対象外。
-    /// 既定エンコーディングは Shift-JIS。UTF-8/UTF-16 の BOM がある場合はそのエンコーディングを維持する。
+    /// エンコーディングは BOM（UTF-8 / UTF-16）または BOM なし時のラウンドトリップ検証
+    /// （Shift-JIS → UTF-8）で判定する。判定できないファイルは置換せず警告ログを出す。
     /// </summary>
-    /// <returns>置換したファイル数と箇所数。</returns>
-    public static (int FileCount, int OccurrenceCount) ReplaceViewDbNames(
+    /// <returns>置換したファイル数・箇所数・エンコーディング判定不可でスキップした件数。</returns>
+    public static (int FileCount, int OccurrenceCount, int SkippedCount) ReplaceViewDbNames(
         string sourceDir,
         List<PilotDbNameReplacement> rules,
         bool dryRun,
         Action<string>? onOutputLine = null)
     {
-        if (string.IsNullOrWhiteSpace(sourceDir) || !Directory.Exists(sourceDir) || rules.Count == 0)
-            return (0, 0);
+        if (string.IsNullOrWhiteSpace(sourceDir) || rules.Count == 0)
+            return (0, 0, 0);
+
+        if (!Directory.Exists(sourceDir))
+        {
+            onOutputLine?.Invoke($"WARN: View DB名置換の走査先ディレクトリが存在しません: {sourceDir}");
+            return (0, 0, 0);
+        }
 
         var activeRules = rules
             .Where(r => !string.IsNullOrWhiteSpace(r.From) && !string.IsNullOrWhiteSpace(r.To))
             .ToList();
         if (activeRules.Count == 0)
-            return (0, 0);
+            return (0, 0, 0);
 
+        // ルールは順次適用する。あるルールの To が後続ルールの From にマッチすると二重置換し得る。
+        // 現状の運用設定は1ルールのみ。複数ルールを追加する場合は選択的な単一パス置換への変更を検討すること。
         var fileCount = 0;
         var occurrenceCount = 0;
+        var skippedCount = 0;
 
         foreach (var filePath in Directory.EnumerateFiles(sourceDir, "*.sql", SearchOption.AllDirectories))
         {
-            var (encoding, text) = ReadSqlFilePreservingEncoding(filePath);
+            if (!TryReadSqlFilePreservingEncoding(filePath, out var encoding, out var text, out var skipReason))
+            {
+                skippedCount++;
+                onOutputLine?.Invoke($"WARN: View DB名置換をスキップ（エンコーディング判定不可）: {Path.GetFileName(filePath)} ({skipReason})");
+                continue;
+            }
+
             if (!IsViewDefinition(text))
                 continue;
 
@@ -393,7 +412,8 @@ public class WebSourceDeployService
                 if (matches.Count == 0)
                     continue;
                 fileOccurrences += matches.Count;
-                replaced = Regex.Replace(replaced, pattern, rule.To, RegexOptions.IgnoreCase);
+                // MatchEvaluator を使い、rule.To 内の `$` が置換パターン（$1/$&/$$）として解釈されないようにする。
+                replaced = Regex.Replace(replaced, pattern, _ => rule.To, RegexOptions.IgnoreCase);
             }
 
             if (fileOccurrences == 0)
@@ -410,7 +430,7 @@ public class WebSourceDeployService
                 File.WriteAllText(filePath, replaced, encoding);
         }
 
-        return (fileCount, occurrenceCount);
+        return (fileCount, occurrenceCount, skippedCount);
     }
 
     /// <summary>CREATE VIEW / ALTER VIEW / CREATE OR ALTER VIEW（空白・大文字小文字の揺れを許容）。</summary>
@@ -423,36 +443,75 @@ public class WebSourceDeployService
 
     /// <summary>
     /// SQL ファイルを読み、書き戻し用の Encoding を返す。
-    /// UTF-8 BOM / UTF-16 LE・BE BOM を検出し、それ以外は Shift-JIS として扱う。
+    /// UTF-8 BOM / UTF-16 LE・BE BOM を優先検出する。
+    /// BOM なしの場合は Shift-JIS → UTF-8（BOMなし）の順でラウンドトリップ検証し、
+    /// どちらでも元バイト列に戻らない場合は失敗（呼び出し側でスキップ＋警告）とする。
     /// </summary>
-    private static (Encoding Encoding, string Text) ReadSqlFilePreservingEncoding(string path)
+    private static bool TryReadSqlFilePreservingEncoding(
+        string path,
+        out Encoding encoding,
+        out string text,
+        out string? error)
     {
+        encoding = Encoding.UTF8;
+        text = "";
+        error = null;
+
         var bytes = File.ReadAllBytes(path);
 
         // UTF-8 BOM
         if (bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
         {
-            var enc = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
-            return (enc, enc.GetString(bytes, 3, bytes.Length - 3));
+            encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: true);
+            text = encoding.GetString(bytes, 3, bytes.Length - 3);
+            return true;
         }
 
         // UTF-16 LE BOM
         if (bytes.Length >= 2 && bytes[0] == 0xFF && bytes[1] == 0xFE)
         {
-            var enc = new UnicodeEncoding(bigEndian: false, byteOrderMark: true);
-            return (enc, enc.GetString(bytes, 2, bytes.Length - 2));
+            encoding = new UnicodeEncoding(bigEndian: false, byteOrderMark: true);
+            text = encoding.GetString(bytes, 2, bytes.Length - 2);
+            return true;
         }
 
         // UTF-16 BE BOM
         if (bytes.Length >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF)
         {
-            var enc = new UnicodeEncoding(bigEndian: true, byteOrderMark: true);
-            return (enc, enc.GetString(bytes, 2, bytes.Length - 2));
+            encoding = new UnicodeEncoding(bigEndian: true, byteOrderMark: true);
+            text = encoding.GetString(bytes, 2, bytes.Length - 2);
+            return true;
         }
 
-        // 既定: Shift-JIS（DeployService の SQL 読み書きと同じ）
+        // BOM なし: Shift-JIS（既存 DeployService と同じ既定）を優先し、ラウンドトリップで検証する。
+        // BOM なし UTF-8 を SJIS で誤デコードすると日本語が壊れ、書き戻しでファイル全体が破損するため。
         var sjis = Encoding.GetEncoding("shift_jis");
-        return (sjis, sjis.GetString(bytes));
+        var sjisText = sjis.GetString(bytes);
+        if (sjis.GetBytes(sjisText).AsSpan().SequenceEqual(bytes))
+        {
+            encoding = sjis;
+            text = sjisText;
+            return true;
+        }
+
+        var utf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+        try
+        {
+            var utf8Text = utf8.GetString(bytes);
+            if (utf8.GetBytes(utf8Text).AsSpan().SequenceEqual(bytes))
+            {
+                encoding = utf8;
+                text = utf8Text;
+                return true;
+            }
+        }
+        catch (DecoderFallbackException)
+        {
+            // 無効な UTF-8 シーケンス
+        }
+
+        error = "Shift-JIS / UTF-8（BOMなし）のいずれでもバイト列を再現できません";
+        return false;
     }
 
     private static async Task<int> RunDeployBatAsync(
@@ -540,7 +599,7 @@ public class WebSourceDeployService
             WebSourceSqlDeployResult? onlySqlResult;
             try
             {
-                onlySqlResult = await RunSqlDeployAsync(config, line => LogLine("DETAIL", line), ct);
+                onlySqlResult = await RunSqlDeployAsync(config, line => LogSqlDeployLine(LogLine, line), ct);
                 if (onlySqlResult is not null)
                 {
                     LogLine(onlySqlResult.Success ? "OK" : "ERROR",
@@ -655,7 +714,7 @@ public class WebSourceDeployService
         {
             try
             {
-                sqlDeployResult = await RunSqlDeployAsync(config, line => LogLine("DETAIL", line), ct);
+                sqlDeployResult = await RunSqlDeployAsync(config, line => LogSqlDeployLine(LogLine, line), ct);
                 if (sqlDeployResult is not null)
                 {
                     LogLine(sqlDeployResult.Success ? "OK" : "ERROR",
@@ -683,6 +742,15 @@ public class WebSourceDeployService
         WebSourceDeployStep.SqlOnly => "SQL適用のみ",
         _ => "Webソースコピー＋SQL適用",
     };
+
+    /// <summary>
+    /// SQL 適用ログのうち "WARN:" で始まる行は WARN レベルで出す（robocopy の DETAIL に埋もれないようにする）。
+    /// </summary>
+    private static void LogSqlDeployLine(Action<string, string> logLine, string message)
+    {
+        var level = message.StartsWith("WARN:", StringComparison.Ordinal) ? "WARN" : "DETAIL";
+        logLine(level, message);
+    }
 }
 
 /// <summary>Webソース配布の1ターゲット（pilot1 / pilot2）分の実行結果。</summary>

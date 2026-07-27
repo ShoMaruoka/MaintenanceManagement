@@ -28,8 +28,8 @@ Issue #25 で実装済みの「Pilot環境適用」（`WebSourceDeployService` /
   `RunSqlDeployAsync` の robocopy コピー完了後・`deploy.bat` 実行前に実行する。
 - **View 判定はファイル内容ベース**: 適用フォルダの SQL は `dbo.{名前}.sql` のフラット構成でオブジェクト種別が分からないため、
   ファイル内容に `CREATE VIEW` / `ALTER VIEW` / `CREATE OR ALTER VIEW` を含むものを View とみなす。
-- **文字コードは元ファイル維持**: 既定 Shift-JIS（既存 `DeployService` の SQL 読み書きと同じ）。UTF-8/UTF-16 の BOM を
-  検出した場合はそのエンコーディングで読み書きし、BOM の有無も再現する（Issue #25 の web.config 置換と同じ考え方）。
+- **文字コードは元ファイル維持**: BOM（UTF-8 / UTF-16）を検出して維持。BOM なしは Shift-JIS → UTF-8 の
+  ラウンドトリップ検証で判定し、再現できないファイルは置換せず警告スキップする（Issue #25 の web.config 置換と同趣旨の「書式を壊さない」方針）。
 
 ## Task List
 
@@ -254,7 +254,7 @@ Task 4 + Task 6 + Task 8 ── Task 9 (通し確認) ── Task 10 (ドキュ�
 | `/MT:32` によりネットワーク・pilot サーバー負荷が上がる | Low | 手動運用の実績値と同じ。問題があれば `BuildArguments` の1行変更で戻せる |
 | View 判定の誤検出（コメント内の `CREATE VIEW` 等） | Low | 誤検出しても置換されるのは `KaiosDB` 参照のみで、pilot 向けコピー先に限定されるため実害は小さい。ダミー SQL での検証で確認する |
 | 文字列リテラルや動的 SQL 内の `KaiosDB` も置換される | Low | pilot 適用では `KaiosDB_pilot` を参照するのが正しいため、原則として意図どおり。検証時に想定外の置換が出ないか diff で確認する |
-| SQL ファイルのエンコーディングが Shift-JIS 以外だった場合の文字化け | Med | BOM 検出でエンコーディングを維持。検証で Shift-JIS / UTF-8 BOM の両方を確認する |
+| SQL ファイルのエンコーディングが Shift-JIS 以外だった場合の文字化け | Med | BOM 検出＋ BOM なし時は SJIS→UTF-8 のラウンドトリップ検証。判定不可は置換スキップ＋WARN。検証で SJIS / UTF-8 BOM / UTF-8 BOMなしを確認する |
 | gos の `DestImagePath` 実値（共有ルート）が未確定 | Low | サンプル値のみコミットし、実値は運用担当確認後に実 `appsettings.json` へ設定する |
 | 画像コピー先が Files コピーと重複して意図しない上書きになる | Low | SPEC で「共通画像側が後勝ち」と定義済み。実行順序を固定し、ログで判別できるようにする |
 
