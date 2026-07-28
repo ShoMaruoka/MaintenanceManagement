@@ -10,3 +10,4 @@ docs/ignore/
 backend/appsettings.json
 backend/wwwroot/
 tasks/
+graphify-out/

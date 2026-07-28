@@ -28,7 +28,11 @@ robocopy 後にコピー先の `Web.config.DC.{DbConfig.Name}.pilot` を `web.co
    失敗時の `break`（以降ターゲット・SQL スキップ）は現行どおり。専用の `WebSourceDeployStep` は増やさない。
 
 5. **DryRun**  
-   パイロット用ファイルの存在チェックは行い、欠落なら例外。存在すればログのみで `File.Copy` しない（現行置換と同じ契約）。
+   パイロット用ファイルの存在チェックは **コピー元 `WebSourcePath`** で行い、欠落なら例外。存在すればログのみで `File.Copy` しない。  
+   （robocopy が DryRun 時にコピーしないため、コピー先を検査すると偽陰性になる）
+
+6. **`ApplyPilotWebConfig` は適用ファイル名を返す**  
+   呼び出し側は戻り値と `File.GetLastWriteTime` でログを出し、ファイル名書式の重複定義を避ける。
 
 6. **設定掃除の範囲**  
    - 必須: `appsettings_sample.json`、`DbConfig.cs`  

@@ -179,22 +179,33 @@ public class WebSourceDeployService
     /// <summary>
     /// コピー先のパイロット用 Web.config を web.config として上書きする。
     /// ファイル名は Web.config.DC.{dbConfigName}.pilot（例: kaios → Web.config.DC.kaios.pilot）。
-    /// dryRun=true の場合は存在チェックのみ行い、上書きしない。
+    /// dryRun=true の場合はコピー元（webSourcePath）側の存在チェックのみ行い、上書きしない。
+    /// dryRun=false の場合はコピー先（destWebSourcePath）側のファイルを web.config へ上書きする。
     /// ソースファイル（.pilot）は削除しない。
     /// </summary>
-    public static void ApplyPilotWebConfig(string destWebSourcePath, string dbConfigName, bool dryRun)
+    /// <returns>適用したパイロット用ファイル名。</returns>
+    public static string ApplyPilotWebConfig(
+        string destWebSourcePath,
+        string webSourcePath,
+        string dbConfigName,
+        bool dryRun)
     {
         var sourceName = $"Web.config.DC.{dbConfigName}.pilot";
-        var sourcePath = Path.Combine(destWebSourcePath, sourceName);
-        var destPath = Path.Combine(destWebSourcePath, "web.config");
+        // DryRun 時は robocopy が走らないため、コピー先ではなくコピー元（STG）の存在を検査する。
+        var existenceCheckPath = Path.Combine(dryRun ? webSourcePath : destWebSourcePath, sourceName);
 
-        if (!File.Exists(sourcePath))
-            throw new FileNotFoundException($"パイロット用 web.config が見つかりません: {sourcePath}", sourcePath);
+        if (!File.Exists(existenceCheckPath))
+            throw new FileNotFoundException(
+                $"パイロット用 web.config が見つかりません: {existenceCheckPath}", existenceCheckPath);
 
-        if (dryRun)
-            return;
+        if (!dryRun)
+        {
+            var sourcePath = Path.Combine(destWebSourcePath, sourceName);
+            var destPath = Path.Combine(destWebSourcePath, "web.config");
+            File.Copy(sourcePath, destPath, overwrite: true);
+        }
 
-        File.Copy(sourcePath, destPath, overwrite: true);
+        return sourceName;
     }
 
     /// <summary>
@@ -599,10 +610,15 @@ public class WebSourceDeployService
                     LogLine("OK", $"{target.Name}: 画像コピー完了 (exit code {imageExitCode})");
                 }
 
-                var pilotWebConfigName = $"Web.config.DC.{config.Name}.pilot";
                 var dryRunTag = _dryRun ? " [DRY-RUN]" : "";
-                ApplyPilotWebConfig(target.DestWebSourcePath, config.Name, _dryRun);
-                LogLine("OK", $"{target.Name}: {pilotWebConfigName} を web.config として適用しました{dryRunTag}");
+                var appliedName = ApplyPilotWebConfig(
+                    target.DestWebSourcePath, config.WebSourcePath, config.Name, _dryRun);
+                var appliedSourcePath = Path.Combine(
+                    _dryRun ? config.WebSourcePath : target.DestWebSourcePath, appliedName);
+                var lastWrite = File.GetLastWriteTime(appliedSourcePath);
+                LogLine("OK",
+                    $"{target.Name}: {appliedName} を web.config として適用しました" +
+                    $"（更新日時: {lastWrite:yyyy-MM-dd HH:mm:ss}）{dryRunTag}");
 
                 results.Add(new WebSourceDeployTargetResult(target.Name, true, null));
             }

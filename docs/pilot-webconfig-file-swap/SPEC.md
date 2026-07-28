@@ -87,21 +87,27 @@ docs/
 /// <summary>
 /// コピー先のパイロット用 Web.config を web.config として上書きする。
 /// ファイル名は Web.config.DC.{dbConfigName}.pilot（例: kaios → Web.config.DC.kaios.pilot）。
-/// dryRun=true の場合は存在チェックのみ行い、上書きしない。
+/// dryRun=true の場合はコピー元（webSourcePath）側の存在チェックのみ行い、上書きしない。
+/// dryRun=false の場合はコピー先側のファイルを web.config へ上書きする。
 /// </summary>
-public static void ApplyPilotWebConfig(string destWebSourcePath, string dbConfigName, bool dryRun)
+/// <returns>適用したパイロット用ファイル名。</returns>
+public static string ApplyPilotWebConfig(
+    string destWebSourcePath, string webSourcePath, string dbConfigName, bool dryRun)
 {
     var sourceName = $"Web.config.DC.{dbConfigName}.pilot";
-    var sourcePath = Path.Combine(destWebSourcePath, sourceName);
-    var destPath = Path.Combine(destWebSourcePath, "web.config");
+    var existenceCheckPath = Path.Combine(dryRun ? webSourcePath : destWebSourcePath, sourceName);
 
-    if (!File.Exists(sourcePath))
-        throw new FileNotFoundException($"パイロット用 web.config が見つかりません: {sourcePath}", sourcePath);
+    if (!File.Exists(existenceCheckPath))
+        throw new FileNotFoundException($"パイロット用 web.config が見つかりません: {existenceCheckPath}", existenceCheckPath);
 
-    if (dryRun)
-        return;
+    if (!dryRun)
+    {
+        var sourcePath = Path.Combine(destWebSourcePath, sourceName);
+        var destPath = Path.Combine(destWebSourcePath, "web.config");
+        File.Copy(sourcePath, destPath, overwrite: true);
+    }
 
-    File.Copy(sourcePath, destPath, overwrite: true);
+    return sourceName;
 }
 ```
 
@@ -120,11 +126,14 @@ public static void ApplyPilotWebConfig(string destWebSourcePath, string dbConfig
 
 - **Always**
   - 差し替えは robocopy（および Files / 画像コピー）完了後に実行する
-  - 差し替え元はコピー先内の `Web.config.DC.{DbConfig.Name}.pilot`
+  - 差し替え元（実適用時）はコピー先内の `Web.config.DC.{DbConfig.Name}.pilot`
+  - DryRun 時の存在チェックはコピー元 `WebSourcePath` 配下で行う（robocopy が走らないため）
   - 差し替え先ファイル名は `web.config`（上書きのみ。バックアップ不要）
   - パイロット用ファイルは削除しない（残す）
   - 欠落時は例外を送出し、当該ターゲットを失敗・以降スキップ（現行の置換失敗時と同じ）
   - `DryRun=true` 時は実ファイルを書き換えない（存在チェックとログのみ）
+  - 適用したソースファイルの最終更新日時をログに出す
+  - `ApplyPilotWebConfig` の戻り値（適用ファイル名）をログに使い、ファイル名書式の重複定義を避ける
 - **Ask first**
   - パイロット用ファイル名の命名規則変更
   - kaios/gos 以外への Pilot 適用拡張

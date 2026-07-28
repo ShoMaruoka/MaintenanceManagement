@@ -2,6 +2,10 @@ namespace MaintenanceManagement.Api.Models;
 
 public class DbConfig
 {
+    /// <summary>
+    /// システム識別名（例: kaios / gos）。
+    /// pilot 用 Web.config のファイル名（Web.config.DC.{Name}.pilot）の導出にも使用される。
+    /// </summary>
     public string Name { get; set; } = "";
 
     // DB 名（3 環境）
