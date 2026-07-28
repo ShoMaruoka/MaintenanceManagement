@@ -15,7 +15,8 @@ Issue #25 で実装済みの「Pilot環境適用」（`WebSourceDeployService` /
 ## Architecture Decisions
 
 - **画像コピーは既存ターゲットループ内のステップとして追加**: `ExecuteAsync` の `foreach (var target in config.PilotTargets)` 内、
-  Files コピーの後・web.config 置換の前に挿入する。専用のステップ種別（`WebSourceDeployStep`）は増やさない。
+  Files コピーの後・パイロット用 web.config 適用の前に挿入する。専用のステップ種別（`WebSourceDeployStep`）は増やさない。
+  （注: Issue #25 当時は「web.config 置換」。現行はファイル差し替え。`docs/pilot-webconfig-file-swap`）
   結果も専用レコードを作らず、既存の `WebSourceDeployTargetResult`（pilot1/pilot2）に内包する。
 - **コピー処理は既存 `RunRobocopyAsync` をそのまま再利用**: 除外設定・DryRun・キャンセル時 Kill・終了コード判定・
   パス検証（`ValidateDeployPaths`）をすべて共有できるため、画像専用のコピー実装は作らない。
@@ -29,7 +30,7 @@ Issue #25 で実装済みの「Pilot環境適用」（`WebSourceDeployService` /
 - **View 判定はファイル内容ベース**: 適用フォルダの SQL は `dbo.{名前}.sql` のフラット構成でオブジェクト種別が分からないため、
   ファイル内容に `CREATE VIEW` / `ALTER VIEW` / `CREATE OR ALTER VIEW` を含むものを View とみなす。
 - **文字コードは元ファイル維持**: BOM（UTF-8 / UTF-16）を検出して維持。BOM なしは Shift-JIS → UTF-8 の
-  ラウンドトリップ検証で判定し、再現できないファイルは置換せず警告スキップする（Issue #25 の web.config 置換と同趣旨の「書式を壊さない」方針）。
+  ラウンドトリップ検証で判定し、再現できないファイルは置換せず警告スキップする（「書式を壊さない」方針。旧 Issue #25 の web.config 置換と同趣旨）。
 
 ## Task List
 
@@ -85,7 +86,7 @@ Issue #25 で実装済みの「Pilot環境適用」（`WebSourceDeployService` /
   - **Estimated scope**: XS（1ファイル）
 
 - [x] **Task 4: `ExecuteAsync` のターゲットループに共通画像コピーを追加**
-  - **Description**: Files コピー（`FilesDeploy2PrdPath`）の後・web.config 置換の前に、
+  - **Description**: Files コピー（`FilesDeploy2PrdPath`）の後・パイロット用 web.config 適用の前に、
     `CommonImagePath` → `target.DestImagePath` の robocopy を実行するステップを追加する。
     どちらかが未設定ならスキップし、その旨をログ出力する。robocopy がエラー終了（exit code 8 以上）した場合は
     そのターゲットを失敗として `break` し、以降のターゲット・SQL適用を行わない。
@@ -134,7 +135,7 @@ Issue #25 で実装済みの「Pilot環境適用」（`WebSourceDeployService` /
 - [x] `dotnet build` / `npm run build` が通る
 - [x] ローカルのダミーフォルダで、DryRun / 実コピーの双方の挙動を確認済み
 - [x] 画面に画像コピー元・コピー先が表示され、実行ログで画像コピーのステップが判別できる
-- [ ] 人によるレビュー: 実行順序（Files コピー → 画像コピー → web.config 置換）と失敗時の中断挙動
+- [ ] 人によるレビュー: 実行順序（Files コピー → 画像コピー → パイロット用 web.config 適用）と失敗時の中断挙動
 
 ---
 

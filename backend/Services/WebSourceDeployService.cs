@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
-using System.Xml;
 using MaintenanceManagement.Api.Models;
 
 namespace MaintenanceManagement.Api.Services;
@@ -178,115 +177,25 @@ public class WebSourceDeployService
     }
 
     /// <summary>
-    /// pilot側 web.config の connectionStrings/add[@name] を PilotConnectionStrings の値で置換する。
-    /// コメントアウトされた &lt;add&gt;（逆システム向けの残骸）は XmlReader が要素として読み飛ばすため、
-    /// name 属性照合だけで有効な要素のみが自動的にヒットする（SPEC 7.1 参照）。
-    ///
-    /// 実装上の注意: XDocument/XmlDocument でロード→Saveする方式は、自己終了タグの空白挿入
-    /// （"/>" → " />"）や XML 宣言への encoding 属性付与など、対象外の箇所まで書式を変えてしまう
-    /// （検証で確認済み）。そのため XmlReader で対象行番号と旧値のみを特定し、元テキストの該当行を
-    /// 文字列置換する方式にして、connectionStrings 以外の書式を一切変えないようにしている。
-    ///
-    /// dryRun=true の場合はファイルを一切書き換えない（存在チェックと対象特定のみ行う）。
-    /// PilotConnectionStrings に定義された name が web.config 側で1件も見つからない場合、
-    /// 「置換したつもりでSTGの接続先が残る」事故を避けるため例外を送出する（未ヒットが1件でもあれば失敗）。
-    /// 一部ヒット・一部未ヒットの場合はファイルへの書き込みを行わず例外を送出する（部分適用を避ける）。
+    /// コピー先のパイロット用 Web.config を web.config として上書きする。
+    /// ファイル名は Web.config.DC.{dbConfigName}.pilot（例: kaios → Web.config.DC.kaios.pilot）。
+    /// dryRun=true の場合は存在チェックのみ行い、上書きしない。
+    /// ソースファイル（.pilot）は削除しない。
     /// </summary>
-    /// <returns>置換した件数。</returns>
-    public static int ReplaceConnectionStrings(string webConfigPath, List<PilotConnectionString> pilotConnectionStrings, bool dryRun)
+    public static void ApplyPilotWebConfig(string destWebSourcePath, string dbConfigName, bool dryRun)
     {
-        if (!File.Exists(webConfigPath))
-            throw new FileNotFoundException($"web.config が見つかりません: {webConfigPath}", webConfigPath);
+        var sourceName = $"Web.config.DC.{dbConfigName}.pilot";
+        var sourcePath = Path.Combine(destWebSourcePath, sourceName);
+        var destPath = Path.Combine(destWebSourcePath, "web.config");
 
-        if (pilotConnectionStrings.Count == 0)
-            return 0;
-
-        // Encoding.UTF8 は BOM の有無に関わらず GetPreamble() が常に BOM を返すため、
-        // 元ファイルに BOM が無い場合でも書き込み時に BOM が付いてしまう。
-        // 実バイト列から BOM の有無を判定し、書き込み時も同じ状態を再現する。
-        var fileBytes = File.ReadAllBytes(webConfigPath);
-        var hasBom = fileBytes.Length >= 3 && fileBytes[0] == 0xEF && fileBytes[1] == 0xBB && fileBytes[2] == 0xBF;
-        var encoding = new UTF8Encoding(encoderShouldEmitUTF8Identifier: hasBom);
-        var rawText = hasBom
-            ? Encoding.UTF8.GetString(fileBytes, 3, fileBytes.Length - 3)
-            : Encoding.UTF8.GetString(fileBytes);
-
-        var lines = rawText.Split('\n');
-        var unmatchedNames = new List<string>();
-        var replacedCount = 0;
-
-        foreach (var pcs in pilotConnectionStrings)
-        {
-            var (lineIndex, oldValue) = FindActiveConnectionStringLine(webConfigPath, pcs.Name);
-            if (lineIndex < 0)
-            {
-                unmatchedNames.Add(pcs.Name);
-                continue;
-            }
-
-            var oldAttr = $"connectionString=\"{EscapeXmlAttribute(oldValue)}\"";
-            var newAttr = $"connectionString=\"{EscapeXmlAttribute(pcs.ConnectionString)}\"";
-
-            if (!lines[lineIndex].Contains(oldAttr, StringComparison.Ordinal))
-                throw new InvalidOperationException(
-                    $"web.config の {lineIndex + 1} 行目で connectionString 属性の位置特定に失敗しました（name={pcs.Name}）: {webConfigPath}");
-
-            lines[lineIndex] = lines[lineIndex].Replace(oldAttr, newAttr, StringComparison.Ordinal);
-            replacedCount++;
-        }
-
-        if (unmatchedNames.Count > 0)
-            throw new InvalidOperationException(
-                $"web.config に該当する connectionStrings/add が見つかりません（name={string.Join(", ", unmatchedNames)}）: {webConfigPath}");
+        if (!File.Exists(sourcePath))
+            throw new FileNotFoundException($"パイロット用 web.config が見つかりません: {sourcePath}", sourcePath);
 
         if (dryRun)
-            return replacedCount; // ファイルは書き換えない
+            return;
 
-        File.WriteAllText(webConfigPath, string.Join('\n', lines), encoding);
-        return replacedCount;
+        File.Copy(sourcePath, destPath, overwrite: true);
     }
-
-    /// <summary>
-    /// connectionStrings セクション配下（コメントアウトされていない）の add[@name=name] を探し、
-    /// 見つかった要素の行番号（0-based）と現在の connectionString 値を返す。見つからなければ (-1, "")。
-    /// </summary>
-    private static (int LineIndex, string OldValue) FindActiveConnectionStringLine(string webConfigPath, string name)
-    {
-        using var reader = XmlReader.Create(webConfigPath, new XmlReaderSettings { DtdProcessing = DtdProcessing.Ignore });
-        var lineInfo = (IXmlLineInfo)reader;
-        var inConnectionStrings = false;
-
-        while (reader.Read())
-        {
-            if (reader.NodeType == XmlNodeType.EndElement && reader.Name == "connectionStrings")
-            {
-                inConnectionStrings = false;
-                continue;
-            }
-
-            if (reader.NodeType != XmlNodeType.Element) continue;
-
-            if (reader.Name == "connectionStrings")
-            {
-                inConnectionStrings = true;
-                continue;
-            }
-
-            if (!inConnectionStrings || reader.Name != "add") continue;
-
-            var elementLine = lineInfo.LineNumber; // 1-based
-            var addName = reader.GetAttribute("name");
-            var connectionString = reader.GetAttribute("connectionString");
-
-            if (addName == name && connectionString is not null)
-                return (elementLine - 1, connectionString);
-        }
-
-        return (-1, "");
-    }
-
-    private static string EscapeXmlAttribute(string value) =>
-        value.Replace("&", "&amp;").Replace("\"", "&quot;").Replace("<", "&lt;").Replace(">", "&gt;");
 
     /// <summary>
     /// PilotSqlDeployPath\Source を空にしてから Deploy2PrdPath の SQL ファイル一式をコピーし、
@@ -566,7 +475,7 @@ public class WebSourceDeployService
     /// <summary>
     /// DbConfig.PilotTargets を pilot1 → pilot2 の順に処理し、成功した場合は続けて SQL 適用
     /// （PilotSqlDeployPath への SQL コピー＋deploy.bat 実行）を行う。
-    /// あるターゲットで robocopy がエラー終了、または web.config 置換が失敗した場合、
+    /// あるターゲットで robocopy がエラー終了、またはパイロット用 web.config 適用が失敗した場合、
     /// 以降のターゲット・SQL 適用ステップはスキップする。
     /// 誤操作によるファイル消失を避けるため、コピーは常に /E（削除同期なし）で行う（/MIR は使用しない）。
     /// SQL 適用の成否は Web ソースコピーとは独立した結果として返す（互いのステータスに影響しない）。
@@ -690,10 +599,10 @@ public class WebSourceDeployService
                     LogLine("OK", $"{target.Name}: 画像コピー完了 (exit code {imageExitCode})");
                 }
 
-                var webConfigPath = Path.Combine(target.DestWebSourcePath, "web.config");
+                var pilotWebConfigName = $"Web.config.DC.{config.Name}.pilot";
                 var dryRunTag = _dryRun ? " [DRY-RUN]" : "";
-                var replacedCount = ReplaceConnectionStrings(webConfigPath, config.PilotConnectionStrings, _dryRun);
-                LogLine("OK", $"{target.Name}: web.config の接続文字列を{replacedCount}件置換しました{dryRunTag}");
+                ApplyPilotWebConfig(target.DestWebSourcePath, config.Name, _dryRun);
+                LogLine("OK", $"{target.Name}: {pilotWebConfigName} を web.config として適用しました{dryRunTag}");
 
                 results.Add(new WebSourceDeployTargetResult(target.Name, true, null));
             }

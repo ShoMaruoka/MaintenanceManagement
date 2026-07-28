@@ -32,7 +32,7 @@ Issue #25 で実装した「Pilot環境適用」機能（STG → pilot1/pilot2 �
 | Webソースコピー | `WebSourcePath` → 各 pilot の `DestWebSourcePath` へ robocopy（実装済み） | 変更なし |
 | 静的ファイルコピー | `FilesDeploy2PrdPath`（Images/news/pdf）→ pilot Webルート直下へ robocopy（実装済み） | 変更なし（画像コピーはこの**後**に実行） |
 | 共通画像コピー | `E:\Kaios_Image\Common_Image` → pilot の `Images\products` を**手作業** | robocopy で自動化（本 issue） |
-| web.config 置換 | `connectionStrings` を pilot 用に置換（実装済み） | 変更なし |
+| web.config 適用 | パイロット用ファイル差し替え（`Web.config.DC.{name}.pilot` → `web.config`）。詳細は `docs/pilot-webconfig-file-swap/SPEC.md` | 本 issue では変更なし（後続で差し替え方式へ移行済み） |
 | SQL適用 | `Deploy2PrdPath` → `PilotSqlDeployPath\Source` へコピー ＋ `deploy.bat` 実行（実装済み） | コピー後・`deploy.bat` 実行前に View の DB 名置換を挿入（本 issue） |
 | View の DB 名 | `KaiosDB` のまま pilot へ適用され、pilot から STG/本番 DB を参照してしまう | `KaiosDB_pilot` へ自動置換（本 issue） |
 
@@ -109,7 +109,7 @@ Issue #27 記載のコピー先（gos も `CommonImagePath` は同一フォル�
   1. `WebSourcePath` → `DestWebSourcePath`（既存）
   2. `FilesDeploy2PrdPath` → `DestWebSourcePath`（既存）
   3. **`CommonImagePath` → `DestImagePath`（本 issue で追加）**
-  4. `web.config` の `connectionStrings` 置換（既存）
+  4. パイロット用 `Web.config.DC.{Name}.pilot` を `web.config` として適用（`docs/pilot-webconfig-file-swap`）
 - 2 と 3 で対象が重複した場合、**後に実行される共通画像コピー側が上書き（後勝ち）** となる
 - コピーは既存 `RunRobocopyAsync` をそのまま使用（`/E /MT:32 /R:2 /W:5 /NP /XX` ＋ `WebSourceDeploy:ExcludeFiles`/`ExcludeDirs`）。
   除外設定は Webソースコピーと共通のものを適用する（画像の拡張子は除外対象に含まれないため実害なし）
@@ -200,7 +200,8 @@ POST /api/web-source-prepare/{dbName}/stream
        3. FilesDeploy2PrdPath  → target.DestWebSourcePath へ robocopy /E
        4.【追加】CommonImagePath → target.DestImagePath へ robocopy /E
                 （未設定ならスキップ。失敗時はターゲット失敗として以降を中断）
-       5. web.config の connectionStrings 置換
+       5. パイロット用 Web.config.DC.{Name}.pilot を web.config として適用
+          （docs/pilot-webconfig-file-swap。旧: connectionStrings 置換）
        6. ターゲット結果を WebSourceDeployLog へ記録（画像コピー結果を内包）
 
      SQL適用ステップ（Webソースコピーが全成功した場合のみ / step=sql なら無条件）:

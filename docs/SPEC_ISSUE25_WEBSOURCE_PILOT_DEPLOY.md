@@ -137,7 +137,16 @@ POST /api/web-source-prepare/{dbName}/stream
 
 ---
 
-## 7. web.config接続文字列の置換仕様
+## 7. web.config の適用仕様（廃止・移行済み）
+
+> **【廃止】** 本節の接続文字列部分置換（`PilotConnectionStrings` / `ReplaceConnectionStrings`）は廃止した。  
+> **現行仕様**: コピー先の `Web.config.DC.{DbConfig.Name}.pilot` を `web.config` として上書きする。  
+> 詳細は [`docs/pilot-webconfig-file-swap/SPEC.md`](./pilot-webconfig-file-swap/SPEC.md) を参照。  
+> 実サーバーの `appsettings.json` に `PilotConnectionStrings` が残っていてもバインドは無視されるが、手動削除を推奨する。
+
+### 7.0 旧仕様（歴史記録・Issue #25 実装当時）
+
+以下は実装当時の接続文字列置換仕様の記録である（現行コードには存在しない）。
 
 - `appsettings.json` の `DbConfigs[].PilotConnectionStrings` に `{ "name": "接続文字列名", "connectionString": "pilot用の値" }` の配列を保持する
 - コピー完了後、pilot側web.configをXMLとして読み込み、`connectionStrings/add`要素を`name`属性で照合し、一致する要素の`connectionString`属性のみを置換する
@@ -155,7 +164,7 @@ kaiosとgosで「どちらがコメントアウトされているか」が入れ
 
 → **kaios/gosでコメント位置が異なっていても、name属性による照合ロジックは共通のまま両方に対応可能**。個別分岐は不要。
 
-### 7.2 置換時の注意点（実装確定）
+### 7.2 置換時の注意点（実装確定・旧方式）
 
 実装・実ファイル検証の結果、当初想定していた`XDocument`によるロード→Save方式は不採用とした。`XDocument.Save`は自己終了タグへの空白挿入（`/>` → ` />`）やXML宣言への`encoding`属性付与など、**置換対象外の箇所まで書式を変えてしまう**ことが実ファイル検証で判明したため（7.1のサンプルで実測）。
 
@@ -167,7 +176,7 @@ kaiosとgosで「どちらがコメントアウトされているか」が入れ
 
 この方式により、実サンプル（`Web.config_sample_kaios`/`gos`）で検証した結果、**置換対象の2行以外は完全に元ファイルと一致**することを確認済み（コメントアウトされた逆システム向けの値も無変更）。
 
-### 7.3 未ヒット・DryRun時の扱い（実装確定）
+### 7.3 未ヒット・DryRun時の扱い（実装確定・旧方式）
 
 - `PilotConnectionStrings`に定義された`name`のうち、web.config側に有効な（コメントアウトされていない）`add`要素が1件も見つからない場合、**エラーとして例外を送出する**。STGの接続文字列がpilot側に残ったまま「成功」として処理が終わる事故を防ぐため。
 - 一部の`name`はヒットし一部はヒットしない場合も、ファイルへの書き込みは行わずエラーとする（部分適用を避ける。全件ヒットした場合のみ書き込む）

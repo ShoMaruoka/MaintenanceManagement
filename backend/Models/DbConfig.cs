@@ -53,8 +53,6 @@ public class DbConfig
     public string WebSourcePath { get; set; } = "";
     /// <summary>適用先 pilot サーバー一覧（pilot1 → pilot2 の順で適用）。</summary>
     public List<PilotTarget> PilotTargets { get; set; } = [];
-    /// <summary>pilot 用 web.config 接続文字列（pilot1/pilot2 共通）。</summary>
-    public List<PilotConnectionString> PilotConnectionStrings { get; set; } = [];
 
     /// <summary>
     /// pilot 環境向け SQL 適用フォルダ（配下に "Source"（コピー先）と "deploy.bat"（事前配置・本システムは作成しない）を持つ）。
@@ -87,13 +85,6 @@ public class PilotTarget
     public string DestWebSourcePath { get; set; } = "";
     /// <summary>共通画像のコピー先（例: ...\Images\products）。未設定時は画像コピーステップをスキップする。</summary>
     public string DestImagePath { get; set; } = "";
-}
-
-/// <summary>pilot 側 web.config の connectionStrings 置換値。</summary>
-public class PilotConnectionString
-{
-    public string Name { get; set; } = "";
-    public string ConnectionString { get; set; } = "";
 }
 
 /// <summary>pilot 向け SQL 適用時の View ソース内 DB 名置換ルール（例: KaiosDB → KaiosDB_pilot）。</summary>

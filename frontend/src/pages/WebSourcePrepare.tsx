@@ -213,7 +213,7 @@ export default function WebSourcePrepare() {
     <div>
       <div style={{ marginBottom: 16, fontSize: 12, color: '#6b7280', lineHeight: 1.6 }}>
         STG サーバーの Web ソース（公開フォルダ）を pilot1 → pilot2 の順に自動でコピーします（削除同期なしの全量コピーのみ）。
-        続けて共通画像フォルダを各 pilot の Images\products へコピーし、各 pilot 側 web.config の接続文字列を書き換えます。
+        続けて共通画像フォルダを各 pilot の Images\products へコピーし、各 pilot 側でパイロット用 Web.config（例: Web.config.DC.kaios.pilot）を web.config として適用します。
         pilot1 が失敗した場合、pilot2 は実行されません。
         すべて成功した場合、続けて SQL ファイルの pilot 環境への適用（コピー＋View DB名置換＋deploy.bat実行）を行います。
       </div>
