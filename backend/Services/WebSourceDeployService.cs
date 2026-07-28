@@ -183,29 +183,28 @@ public class WebSourceDeployService
     /// dryRun=false の場合はコピー先（destWebSourcePath）側のファイルを web.config へ上書きする。
     /// ソースファイル（.pilot）は削除しない。
     /// </summary>
-    /// <returns>適用したパイロット用ファイル名。</returns>
+    /// <returns>存在確認に使ったパイロット用ファイルのフルパス（ログ用）。</returns>
     public static string ApplyPilotWebConfig(
-        string destWebSourcePath,
         string webSourcePath,
+        string destWebSourcePath,
         string dbConfigName,
         bool dryRun)
     {
         var sourceName = $"Web.config.DC.{dbConfigName}.pilot";
         // DryRun 時は robocopy が走らないため、コピー先ではなくコピー元（STG）の存在を検査する。
-        var existenceCheckPath = Path.Combine(dryRun ? webSourcePath : destWebSourcePath, sourceName);
+        var appliedSourcePath = Path.Combine(dryRun ? webSourcePath : destWebSourcePath, sourceName);
 
-        if (!File.Exists(existenceCheckPath))
+        if (!File.Exists(appliedSourcePath))
             throw new FileNotFoundException(
-                $"パイロット用 web.config が見つかりません: {existenceCheckPath}", existenceCheckPath);
+                $"パイロット用 web.config が見つかりません: {appliedSourcePath}", appliedSourcePath);
 
         if (!dryRun)
         {
-            var sourcePath = Path.Combine(destWebSourcePath, sourceName);
             var destPath = Path.Combine(destWebSourcePath, "web.config");
-            File.Copy(sourcePath, destPath, overwrite: true);
+            File.Copy(appliedSourcePath, destPath, overwrite: true);
         }
 
-        return sourceName;
+        return appliedSourcePath;
     }
 
     /// <summary>
@@ -611,13 +610,14 @@ public class WebSourceDeployService
                 }
 
                 var dryRunTag = _dryRun ? " [DRY-RUN]" : "";
-                var appliedName = ApplyPilotWebConfig(
-                    target.DestWebSourcePath, config.WebSourcePath, config.Name, _dryRun);
-                var appliedSourcePath = Path.Combine(
-                    _dryRun ? config.WebSourcePath : target.DestWebSourcePath, appliedName);
+                var appliedSourcePath = ApplyPilotWebConfig(
+                    webSourcePath: config.WebSourcePath,
+                    destWebSourcePath: target.DestWebSourcePath,
+                    dbConfigName: config.Name,
+                    dryRun: _dryRun);
                 var lastWrite = File.GetLastWriteTime(appliedSourcePath);
                 LogLine("OK",
-                    $"{target.Name}: {appliedName} を web.config として適用しました" +
+                    $"{target.Name}: {Path.GetFileName(appliedSourcePath)} を web.config として適用しました" +
                     $"（更新日時: {lastWrite:yyyy-MM-dd HH:mm:ss}）{dryRunTag}");
 
                 results.Add(new WebSourceDeployTargetResult(target.Name, true, null));

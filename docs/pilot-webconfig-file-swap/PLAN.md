@@ -31,15 +31,16 @@ robocopy 後にコピー先の `Web.config.DC.{DbConfig.Name}.pilot` を `web.co
    パイロット用ファイルの存在チェックは **コピー元 `WebSourcePath`** で行い、欠落なら例外。存在すればログのみで `File.Copy` しない。  
    （robocopy が DryRun 時にコピーしないため、コピー先を検査すると偽陰性になる）
 
-6. **`ApplyPilotWebConfig` は適用ファイル名を返す**  
-   呼び出し側は戻り値と `File.GetLastWriteTime` でログを出し、ファイル名書式の重複定義を避ける。
+6. **`ApplyPilotWebConfig` は検査に使ったフルパスを返す**  
+   呼び出し側は戻り値をそのまま `File.GetLastWriteTime` に渡し、ログのファイル名は `Path.GetFileName` で得る。  
+   ディレクトリ選択ロジックをメソッド内に閉じ込める。
 
-6. **設定掃除の範囲**  
+7. **設定掃除の範囲**  
    - 必須: `appsettings_sample.json`、`DbConfig.cs`  
    - `appsettings.Development.json` / `appsettings.json` に現状キーが無いことは確認済み。あれば削除、無ければ触らない。  
    - 実サーバー上の `appsettings.json` に残っていても、未バインドの余分キーは ASP.NET Core では無視されるが、運用設定からは手動削除を推奨（ドキュメントに注記）。
 
-7. **ドキュメント**  
+8. **ドキュメント**  
    Issue #25 SPEC の §7（接続文字列置換）を「廃止・ファイル差し替えへ移行」と注記し、Issue #27 SPEC/PLAN の「web.config 置換」文言を更新する。歴史的記述は消しすぎず、現行挙動が分かるようにする。
 
 ## Dependency Graph

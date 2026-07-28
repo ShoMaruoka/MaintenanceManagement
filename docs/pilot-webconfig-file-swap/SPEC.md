@@ -90,24 +90,23 @@ docs/
 /// dryRun=true の場合はコピー元（webSourcePath）側の存在チェックのみ行い、上書きしない。
 /// dryRun=false の場合はコピー先側のファイルを web.config へ上書きする。
 /// </summary>
-/// <returns>適用したパイロット用ファイル名。</returns>
+/// <returns>存在確認に使ったパイロット用ファイルのフルパス（ログ用）。</returns>
 public static string ApplyPilotWebConfig(
-    string destWebSourcePath, string webSourcePath, string dbConfigName, bool dryRun)
+    string webSourcePath, string destWebSourcePath, string dbConfigName, bool dryRun)
 {
     var sourceName = $"Web.config.DC.{dbConfigName}.pilot";
-    var existenceCheckPath = Path.Combine(dryRun ? webSourcePath : destWebSourcePath, sourceName);
+    var appliedSourcePath = Path.Combine(dryRun ? webSourcePath : destWebSourcePath, sourceName);
 
-    if (!File.Exists(existenceCheckPath))
-        throw new FileNotFoundException($"パイロット用 web.config が見つかりません: {existenceCheckPath}", existenceCheckPath);
+    if (!File.Exists(appliedSourcePath))
+        throw new FileNotFoundException($"パイロット用 web.config が見つかりません: {appliedSourcePath}", appliedSourcePath);
 
     if (!dryRun)
     {
-        var sourcePath = Path.Combine(destWebSourcePath, sourceName);
         var destPath = Path.Combine(destWebSourcePath, "web.config");
-        File.Copy(sourcePath, destPath, overwrite: true);
+        File.Copy(appliedSourcePath, destPath, overwrite: true);
     }
 
-    return sourceName;
+    return appliedSourcePath;
 }
 ```
 
@@ -133,7 +132,8 @@ public static string ApplyPilotWebConfig(
   - 欠落時は例外を送出し、当該ターゲットを失敗・以降スキップ（現行の置換失敗時と同じ）
   - `DryRun=true` 時は実ファイルを書き換えない（存在チェックとログのみ）
   - 適用したソースファイルの最終更新日時をログに出す
-  - `ApplyPilotWebConfig` の戻り値（適用ファイル名）をログに使い、ファイル名書式の重複定義を避ける
+  - `ApplyPilotWebConfig` の戻り値（検査に使ったフルパス）をログに使い、ディレクトリ選択ロジックの重複を避ける
+  - 呼び出しは名前付き引数とし、`webSourcePath` → `destWebSourcePath` の順で取り違えを防ぐ
 - **Ask first**
   - パイロット用ファイル名の命名規則変更
   - kaios/gos 以外への Pilot 適用拡張
