@@ -144,31 +144,34 @@ MariaDB のストアドプロシージャと Table を、既存の SQL Server �
 
 ### Phase 3: MariaDB Table の Git 管理対応
 
-- [ ] **Task 9: Step3b（手動適用待ち登録）を MariaDbTable 対応に拡張**
+- [x] **Task 9: Step3b（手動適用待ち登録）を MariaDbTable 対応に拡張**
   - **Description:** `Step3b_RegisterManualApply`（および `GitOnlyTypes` 判定）に `"MariaDbTable"` を含める。`ManualApplyService.Register`（Task 3 で汎用化済み）を通じて、MariaDB Table の Git マージ済みファイルが手動適用待ちとして登録されるようにする。
+  - **Note:** `GitOnlyTypes = ManualApplyService.ManualApplyTypes`（Task 3 で `"MariaDbTable"` 追加済み）であるため、`RunPipelineAsync` の `gitOnlyModules`/`deployModules` 振り分けロジック自体は Task 3〜5 の実装で既に `MariaDbTable` を正しく扱えていた。本タスクではその挙動をテストで明示的に確定させた。
   - **Acceptance criteria:**
-    - [ ] `MariaDbTable` モジュールを選択して実行すると、Step3（MariaDB用 git_merge）のみ実行され、Step4以降（mysql CLI 適用）はスキップされる
-    - [ ] 手動適用待りリストに `ModuleType="MariaDbTable"` として登録される
+    - [x] `MariaDbTable` モジュールを選択して実行すると、Step3（MariaDB用 git_merge）のみ実行され、Step4以降（mysql CLI 適用）はスキップされる
+    - [x] 手動適用待りリストに `ModuleType="MariaDbTable"` として登録される
   - **Verification:**
-    - [ ] 手動確認: MariaDB Table を選択→実行→本番前準備画面の一覧に SQL Server の Table/UDTT と並んで表示されることを確認
+    - [x] xUnit テスト: `MariaDbTable` のみのリクエストで手動適用マニフェストに正しく登録され、`MariaDbDeploySourcePath`（mysql CLI 適用パイプライン）には一切触れないことを確認
+    - [ ] 手動確認: MariaDB Table を選択→実行→本番前準備画面の一覧に SQL Server の Table/UDTT と並んで表示されることを確認（実環境・フロントエンド対応後に実施）
   - **Dependencies:** Task 3, Task 5
   - **Files likely touched:** `backend/Services/DeployService.cs`
   - **Estimated scope:** S
 
-- [ ] **Task 10: 削除候補検出への MariaDB 対応呼び出し追加**
+- [x] **Task 10: 削除候補検出への MariaDB 対応呼び出し追加**
   - **Description:** `ModuleQueryService.GetModulesAsync` に、MariaDB Stored / MariaDbTable 用の `FindDeleteCandidates` 呼び出しを追加する（`MariaDbGitRepoPath` 基準・プレフィックスなし）。
   - **Acceptance criteria:**
-    - [ ] DB上に存在せず `MariaDbGitRepoPath` に残っている Stored/Table ファイルが `IsDeleteCandidate=true` として一覧に含まれる
+    - [x] DB上に存在せず `MariaDbGitRepoPath` に残っている Stored/Table ファイルが `IsDeleteCandidate=true` として一覧に含まれる
+    - [x] 呼び出しは `MariaDbConnectionString` の有無に関わらず（`GitRepoPath` 側と同様）常に実行される。`FindDeleteCandidates` 内部で `MariaDbGitRepoPath` が空の場合は何もしないため安全
   - **Verification:**
-    - [ ] xUnit テスト: `test/Kaios_MariaDB_rep` 内にダミーファイルを配置し検出されることを確認
-    - [ ] 手動確認: `GET /api/modules/kaios` のレスポンスで削除候補バッジが正しく付く
+    - [x] xUnit テスト: 一時ディレクトリにダミーファイル（Stored/Table 双方）を配置し検出されることを確認
+    - [ ] 手動確認: `GET /api/modules/kaios` のレスポンスで削除候補バッジが正しく付く（実環境が必要、未実施）
   - **Dependencies:** Task 3
   - **Files likely touched:** `backend/Services/ModuleQueryService.cs`
   - **Estimated scope:** XS
 
 ### Checkpoint: Phase 3 完了
-- [ ] MariaDB Table の選択→Gitマージのみ→手動適用待ち登録の一連の流れがエラーなく完了する
-- [ ] MariaDB の削除候補が一覧に正しく表示される
+- [x] MariaDB Table の選択→Gitマージのみ→手動適用待ち登録の一連の流れがユニットテスト上でエラーなく完了する（xUnit 23件成功、`dotnet build` 0エラー）
+- [x] MariaDB の削除候補検出ロジックがユニットテストで確認済み（Stored/Table 双方）
 - [ ] 人間によるレビュー後、Phase 4 へ進む
 
 ---

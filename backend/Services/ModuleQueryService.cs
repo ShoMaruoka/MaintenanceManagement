@@ -60,6 +60,10 @@ public class ModuleQueryService
         response.Tables.AddRange(FindDeleteCandidates(config.GitRepoPath, "Table", "Table", response.Tables, gitOnly: true));
         response.UserDefinedTableTypes.AddRange(FindDeleteCandidates(config.GitRepoPath, "UserDefinedTableType", "UserDefinedTableType", response.UserDefinedTableTypes, gitOnly: true));
 
+        // MariaDB: Git上のフォルダ名は "Stored"/"Table"、ファイル名にプレフィックスは付かない
+        response.MariaDb.AddRange(FindDeleteCandidates(config.MariaDbGitRepoPath, "Stored", "Stored", response.MariaDb, gitOnly: false, fileNamePrefix: ""));
+        response.MariaDbTables.AddRange(FindDeleteCandidates(config.MariaDbGitRepoPath, "Table", "MariaDbTable", response.MariaDbTables, gitOnly: true, fileNamePrefix: ""));
+
         return response;
     }
 
