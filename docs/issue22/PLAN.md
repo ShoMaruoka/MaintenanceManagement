@@ -31,7 +31,7 @@ MariaDB のストアドプロシージャと Table を、既存の SQL Server �
   - **Files likely touched:** `backend/Models/DbConfig.cs`, `backend/appsettings.Development.json`, `backend/appsettings_sample.json`
   - **Estimated scope:** S
 
-- [ ] **Task 2: ModuleQueryService の Type 変更 + MariaDB Table クエリ追加**
+- [x] **Task 2: ModuleQueryService の Type 変更 + MariaDB Table クエリ追加**
   - **Description:** `QueryMariaDbAsync` が返す `Type` を `"MariaDB"` から `"Stored"` に変更する。新規に MariaDB Table 取得クエリ（`information_schema.TABLES`、`Type="MariaDbTable"`、`GitOnly=true`）を追加し、`ModuleListResponse` に `MariaDbTables` フィールドを追加する。
   - **Acceptance criteria:**
     - [ ] `QueryMariaDbAsync` が `Type="Stored"` で返す

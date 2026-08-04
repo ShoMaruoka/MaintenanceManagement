@@ -51,6 +51,7 @@ public class ModuleQueryService
         if (!string.IsNullOrEmpty(config.MariaDbConnectionString))
         {
             response.MariaDb = await QueryMariaDbAsync(config.MariaDbConnectionString, config.DevDb);
+            response.MariaDbTables = await QueryMariaDbTablesAsync(config.MariaDbConnectionString, config.DevDb);
         }
 
         response.StoredProcedures.AddRange(FindDeleteCandidates(config.GitRepoPath, "StoredProcedure", response.StoredProcedures));
@@ -153,7 +154,7 @@ public class ModuleQueryService
                 list.Add(new ModuleInfo
                 {
                     Name = reader.GetString(0),
-                    Type = "MariaDB",
+                    Type = "Stored",
                     ModifyDate = reader.IsDBNull(1) ? "" : reader.GetString(1),
                     GitOnly = false,
                 });
@@ -162,6 +163,41 @@ public class ModuleQueryService
         catch (Exception ex)
         {
             _logger.LogError(ex, "MariaDB query failed schema={Schema}", schema);
+        }
+        return list;
+    }
+
+    private async Task<List<ModuleInfo>> QueryMariaDbTablesAsync(string connectionString, string schema)
+    {
+        var list = new List<ModuleInfo>();
+        try
+        {
+            await using var conn = new MySqlConnection(connectionString);
+            await conn.OpenAsync();
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                SELECT TABLE_NAME,
+                       DATE_FORMAT(UPDATE_TIME, '%Y-%m-%d %H:%i') as modify_date
+                FROM information_schema.TABLES
+                WHERE TABLE_SCHEMA = @schema AND TABLE_TYPE = 'BASE TABLE'
+                ORDER BY TABLE_NAME
+                """;
+            cmd.Parameters.AddWithValue("@schema", schema);
+            await using var reader = await cmd.ExecuteReaderAsync();
+            while (await reader.ReadAsync())
+            {
+                list.Add(new ModuleInfo
+                {
+                    Name = reader.GetString(0),
+                    Type = "MariaDbTable",
+                    ModifyDate = reader.IsDBNull(1) ? "" : reader.GetString(1),
+                    GitOnly = true,
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "MariaDB table query failed schema={Schema}", schema);
         }
         return list;
     }
