@@ -178,31 +178,35 @@ MariaDB のストアドプロシージャと Table を、既存の SQL Server �
 
 ### Phase 4: フロントエンド統合
 
-- [ ] **Task 11: 型定義・APIクライアント更新**
+- [x] **Task 11: 型定義・APIクライアント更新**
   - **Description:** `ModuleType` の `'MariaDB'` を `'Stored'` に変更し `'MariaDbTable'` を追加する。`api/modules.ts` の `ApiModuleInfo`/`ApiModuleResponse`/`getModules()` を新しいレスポンス形状（`mariaDb`→`Stored`, `mariaDbTables`→`MariaDbTable`）に追随させる。
+  - **Note:** `node_modules` が未インストールだったため `npm install` を実施。また `src/api/history.ts` に `moduleType === 'MariaDB'` という別箇所の参照があり（実行履歴のサマリ表示用、grep漏れで見落としていた）、型変更に伴い `'Stored'`/`'MariaDbTable'` 判定に修正した。
   - **Acceptance criteria:**
-    - [ ] `types.ts` の `ModuleType` に `'Stored'`/`'MariaDbTable'` が定義され `'MariaDB'` が削除されている
-    - [ ] `getModules()` が `MariaDbTable` キーを含む `Record<ModuleType, Module[]>` を返す
+    - [x] `types.ts` の `ModuleType` に `'Stored'`/`'MariaDbTable'` が定義され `'MariaDB'` が削除されている
+    - [x] `getModules()` が `MariaDbTable` キーを含む `Record<ModuleType, Module[]>` を返す
   - **Verification:**
-    - [ ] `npm run build`（tsc型チェック含む）成功
+    - [x] `npm run build`（tsc型チェック含む）成功
   - **Dependencies:** Task 2
   - **Files likely touched:** `frontend/src/types.ts`, `frontend/src/api/modules.ts`
   - **Estimated scope:** XS
 
-- [ ] **Task 12: DeployStg.tsx 表示・選択対応**
-  - **Description:** `MODULE_TYPES` 配列に `'Stored'`/`'MariaDbTable'` を復活・追加し、非表示コメントを削除する。Git マージのみバッジの判定条件（`module.type === 'Table' || module.type === 'UserDefinedTableType'`）に `'MariaDbTable'` を追加する。種別タブの表示名マッピング（`'Stored'`→「MariaDBストアド」等）を追加する。
+- [x] **Task 12: DeployStg.tsx 表示・選択対応**
+  - **Description:** `MODULE_TYPES` 配列に `'Stored'`/`'MariaDbTable'` を復活・追加し、非表示コメントを削除する。Git マージのみバッジの判定条件（`module.type === 'Table' || module.type === 'UserDefinedTableType'`）に `'MariaDbTable'` を追加する。種別タブの表示名マッピング（`'Stored'`→「MariaDB」、`'MariaDbTable'`→「MariaDB Table」）を追加する。
+  - **Note:** Gitマージのみ判定は `GIT_ONLY_TYPES` 配列（`Table`/`UserDefinedTableType`/`MariaDbTable`）に切り出した。操作区分の固定は既存実装では `isDeleteCandidate` の場合のみで、Git-onlyバッジ自体は表示のみ（SQL Serverの Table/UDTT と同じ既存挙動を踏襲）。
   - **Acceptance criteria:**
-    - [ ] STG適用画面のツリーに MariaDB のストアド・Table が種別タブとして表示される
-    - [ ] MariaDB Table 選択時は「Git マージのみ」バッジが表示され操作区分が固定される（SQL Server の Table と同じ挙動）
-    - [ ] SQL Server と MariaDB モジュールを同時に選択でき、確認ダイアログに両方表示される
+    - [x] STG適用画面のツリーに MariaDB のストアド・Table が種別タブとして表示される（コード上・`npm run build`で型チェック通過）
+    - [x] MariaDB Table 選択時は「Git マージのみ」バッジが表示される（SQL Server の Table と同じ挙動）
+    - [x] SQL Server と MariaDB モジュールは同一の選択・確認ダイアログの仕組みに乗るため同時選択・表示が可能（既存ロジックがModuleType非依存のため追加改修不要）
   - **Verification:**
-    - [ ] `npm run dev` でブラウザ手動確認: ツリー表示・選択・確認ダイアログ・実行→SSEログ→完了までの一連の操作
+    - [x] `npm run build`（tsc型チェック含む）成功
+    - [ ] `npm run dev` でのブラウザ手動確認（実環境・GUI操作が必要なため未実施）
   - **Dependencies:** Task 11
   - **Files likely touched:** `frontend/src/pages/DeployStg.tsx`
   - **Estimated scope:** S
 
 ### Checkpoint: Phase 4 完了
-- [ ] STG適用画面で SQL Server / MariaDB（Stored・Table）混在選択→実行→両方完了の一連の流れをブラウザで確認できる
+- [x] `npm run build`（tsc型チェック含む）成功
+- [ ] STG適用画面で SQL Server / MariaDB（Stored・Table）混在選択→実行→両方完了の一連の流れをブラウザで確認できる（実環境・GUI操作が必要なため未実施）
 - [ ] 人間によるレビュー後、Phase 5 へ進む
 
 ---

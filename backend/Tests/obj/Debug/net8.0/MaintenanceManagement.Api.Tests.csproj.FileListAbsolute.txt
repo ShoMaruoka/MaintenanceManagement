@@ -169,3 +169,4 @@ C:\Users\y.sasaki\orca\workspaces\MaintenanceManagement\ratfish\backend\Tests\ob
 C:\Users\y.sasaki\orca\workspaces\MaintenanceManagement\ratfish\backend\Tests\obj\Debug\net8.0\MaintenanceManagement.Api.Tests.pdb
 C:\Users\y.sasaki\orca\workspaces\MaintenanceManagement\ratfish\backend\Tests\obj\Debug\net8.0\MaintenanceManagement.Api.Tests.genruntimeconfig.cache
 C:\Users\y.sasaki\orca\workspaces\MaintenanceManagement\ratfish\backend\Tests\obj\Debug\net8.0\ref\MaintenanceManagement.Api.Tests.dll
+C:\Users\y.sasaki\orca\workspaces\MaintenanceManagement\ratfish\backend\Tests\bin\Debug\net8.0\MaintenanceManagement.Api.staticwebassets.runtime.json

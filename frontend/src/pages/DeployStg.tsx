@@ -6,14 +6,23 @@ import SelectionSummary from '../components/SelectionSummary'
 import { getDbList, getModules } from '../api/modules'
 import type { DbListItem } from '../api/modules'
 
-// MariaDB は仕様見直し中のためモジュールツリーから一時非表示（型・API・バックエンドは残置）
 const MODULE_TYPES: ModuleType[] = [
   'StoredProcedure',
   'Function',
   'VIEW',
   'Table',
   'UserDefinedTableType',
+  'Stored',
+  'MariaDbTable',
 ]
+
+// 種別タブの表示名（内部の ModuleType 値とは切り離す。指定のない型は値をそのまま表示）
+const MODULE_TYPE_LABELS: Partial<Record<ModuleType, string>> = {
+  Stored: 'MariaDB',
+  MariaDbTable: 'MariaDB Table',
+}
+
+const GIT_ONLY_TYPES: ModuleType[] = ['Table', 'UserDefinedTableType', 'MariaDbTable']
 
 const OP_TYPES: OpType[] = ['更新', '新規', '削除']
 
@@ -230,7 +239,7 @@ export default function DeployStg() {
                   className={`module-cat-item${activeType === type ? ' active' : ''}`}
                   onClick={() => { setActiveType(type); setSearch('') }}
                 >
-                  <span className="module-cat-name">{type}</span>
+                  <span className="module-cat-name">{MODULE_TYPE_LABELS[type] ?? type}</span>
                   {selCount > 0
                     ? <span className="module-cat-count-selected">{selCount}/{modules.length}</span>
                     : <span className="module-cat-count">{modules.length}</span>
@@ -309,7 +318,7 @@ export default function DeployStg() {
                       <div className="module-item-name">{module.name}</div>
                       <div className="module-item-date">
                         modify_date {module.modifyDate}
-                        {(module.type === 'Table' || module.type === 'UserDefinedTableType') && (
+                        {GIT_ONLY_TYPES.includes(module.type) && (
                           <span className="module-git-only-badge">Git マージのみ</span>
                         )}
                         {module.isDeleteCandidate && (

@@ -6,7 +6,7 @@ export interface AppUser {
 
 export type DbName = 'kaios' | 'gos' | 'paf' | 'duskin'
 
-export type ModuleType = 'StoredProcedure' | 'Function' | 'VIEW' | 'Table' | 'UserDefinedTableType' | 'MariaDB'
+export type ModuleType = 'StoredProcedure' | 'Function' | 'VIEW' | 'Table' | 'UserDefinedTableType' | 'Stored' | 'MariaDbTable'
 
 export type OpType = '新規' | '更新' | '削除'
 
