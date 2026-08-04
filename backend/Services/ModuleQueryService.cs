@@ -54,32 +54,44 @@ public class ModuleQueryService
             response.MariaDbTables = await QueryMariaDbTablesAsync(config.MariaDbConnectionString, config.DevDb);
         }
 
-        response.StoredProcedures.AddRange(FindDeleteCandidates(config.GitRepoPath, "StoredProcedure", response.StoredProcedures));
-        response.Functions.AddRange(FindDeleteCandidates(config.GitRepoPath, "Function", response.Functions));
-        response.Views.AddRange(FindDeleteCandidates(config.GitRepoPath, "VIEW", response.Views));
-        response.Tables.AddRange(FindDeleteCandidates(config.GitRepoPath, "Table", response.Tables));
-        response.UserDefinedTableTypes.AddRange(FindDeleteCandidates(config.GitRepoPath, "UserDefinedTableType", response.UserDefinedTableTypes));
+        response.StoredProcedures.AddRange(FindDeleteCandidates(config.GitRepoPath, "StoredProcedure", "StoredProcedure", response.StoredProcedures, gitOnly: false));
+        response.Functions.AddRange(FindDeleteCandidates(config.GitRepoPath, "Function", "Function", response.Functions, gitOnly: false));
+        response.Views.AddRange(FindDeleteCandidates(config.GitRepoPath, "VIEW", "VIEW", response.Views, gitOnly: false));
+        response.Tables.AddRange(FindDeleteCandidates(config.GitRepoPath, "Table", "Table", response.Tables, gitOnly: true));
+        response.UserDefinedTableTypes.AddRange(FindDeleteCandidates(config.GitRepoPath, "UserDefinedTableType", "UserDefinedTableType", response.UserDefinedTableTypes, gitOnly: true));
 
         return response;
     }
 
-    private List<ModuleInfo> FindDeleteCandidates(string gitRepoPath, string type, List<ModuleInfo> existing)
+    /// <summary>
+    /// DB上には存在せず Git リポジトリにのみ残っているファイル（削除候補）を検出する。
+    /// SQL Server 系は GitRepoPath 配下・"dbo."プレフィックス付きファイル名が前提だが、
+    /// MariaDB 系（folderName と moduleType が一致しない場合がある）はプレフィックスなしのため
+    /// <paramref name="fileNamePrefix"/> で切り替えられるようにしている。
+    /// </summary>
+    /// <param name="gitRepoPath">Git リポジトリのルートパス（SQL Server: GitRepoPath / MariaDB: MariaDbGitRepoPath）。</param>
+    /// <param name="folderName">Git リポジトリ内の実フォルダ名（例: MariaDbTable の実フォルダ名は "Table"）。</param>
+    /// <param name="moduleType">検出結果の ModuleInfo.Type に設定する内部種別値。</param>
+    /// <param name="fileNamePrefix">ファイル名プレフィックス（SQL Server: "dbo." / MariaDB: ""）。</param>
+    internal List<ModuleInfo> FindDeleteCandidates(
+        string gitRepoPath, string folderName, string moduleType, List<ModuleInfo> existing,
+        bool gitOnly, string fileNamePrefix = "dbo.")
     {
         var candidates = new List<ModuleInfo>();
         if (string.IsNullOrEmpty(gitRepoPath)) return candidates;
 
-        var dir = Path.Combine(gitRepoPath, type);
+        var dir = Path.Combine(gitRepoPath, folderName);
         if (!Directory.Exists(dir)) return candidates;
 
         var existingNames = new HashSet<string>(existing.Select(m => m.Name), StringComparer.OrdinalIgnoreCase);
 
         try
         {
-            foreach (var file in Directory.EnumerateFiles(dir, "dbo.*.sql"))
+            foreach (var file in Directory.EnumerateFiles(dir, $"{fileNamePrefix}*.sql"))
             {
                 var fileName = Path.GetFileNameWithoutExtension(file);
-                var name = fileName.StartsWith("dbo.", StringComparison.OrdinalIgnoreCase)
-                    ? fileName["dbo.".Length..]
+                var name = fileNamePrefix.Length > 0 && fileName.StartsWith(fileNamePrefix, StringComparison.OrdinalIgnoreCase)
+                    ? fileName[fileNamePrefix.Length..]
                     : fileName;
 
                 if (existingNames.Contains(name)) continue;
@@ -87,9 +99,9 @@ public class ModuleQueryService
                 candidates.Add(new ModuleInfo
                 {
                     Name = name,
-                    Type = type,
+                    Type = moduleType,
                     ModifyDate = "",
-                    GitOnly = type is "Table" or "UserDefinedTableType",
+                    GitOnly = gitOnly,
                     IsDeleteCandidate = true,
                 });
                 existingNames.Add(name);
@@ -97,7 +109,7 @@ public class ModuleQueryService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Delete candidate detection failed for type={Type}", type);
+            _logger.LogError(ex, "Delete candidate detection failed for type={Type}", moduleType);
         }
 
         return candidates;

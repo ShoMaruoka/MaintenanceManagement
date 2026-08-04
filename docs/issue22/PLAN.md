@@ -21,12 +21,12 @@ MariaDB のストアドプロシージャと Table を、既存の SQL Server �
 - [x] **Task 1: DbConfig 拡張 + ローカル設定**
   - **Description:** `DbConfig` に `MariaDbGitRepoPath` プロパティと、MariaDB 用の計算プロパティ（`MariaDbMergePath`, `MariaDbForNewCreationPath`, `MariaDbDeploySourcePath`, `MariaDbDeployBatPath`）を追加する。ローカル検証用に `appsettings.Development.json` の kaios 設定へ `MariaDbGitRepoPath: test/Kaios_MariaDB_rep` を追加する。
   - **Acceptance criteria:**
-    - [ ] `DbConfig.MariaDbGitRepoPath` が追加され、4つの計算プロパティが仕様通りのパスを返す
-    - [ ] `appsettings.Development.json`（kaios）に `MariaDbGitRepoPath` が設定されている
-    - [ ] `appsettings_sample.json` にも同様のサンプル値を追記（ドキュメント整合性のため）
+    - [x] `DbConfig.MariaDbGitRepoPath` が追加され、4つの計算プロパティが仕様通りのパスを返す（xUnitで検証）
+    - [x] `appsettings.Development.json`（kaios）に `MariaDbGitRepoPath` が設定されている
+    - [x] `appsettings_sample.json` にも同様のサンプル値を追記（ドキュメント整合性のため）
   - **Verification:**
-    - [ ] `dotnet build` 成功
-    - [ ] 手動確認: アプリ起動後 `GET /api/modules` が既存通り200を返す（デシリアライズ失敗しない）
+    - [x] `dotnet build` 成功
+    - [ ] 手動確認: アプリ起動後 `GET /api/modules` が既存通り200を返す（サンドボックス環境でサーバー起動が許可されず未実施。実環境での確認が必要）
   - **Dependencies:** None
   - **Files likely touched:** `backend/Models/DbConfig.cs`, `backend/appsettings.Development.json`, `backend/appsettings_sample.json`
   - **Estimated scope:** S
@@ -34,33 +34,35 @@ MariaDB のストアドプロシージャと Table を、既存の SQL Server �
 - [x] **Task 2: ModuleQueryService の Type 変更 + MariaDB Table クエリ追加**
   - **Description:** `QueryMariaDbAsync` が返す `Type` を `"MariaDB"` から `"Stored"` に変更する。新規に MariaDB Table 取得クエリ（`information_schema.TABLES`、`Type="MariaDbTable"`、`GitOnly=true`）を追加し、`ModuleListResponse` に `MariaDbTables` フィールドを追加する。
   - **Acceptance criteria:**
-    - [ ] `QueryMariaDbAsync` が `Type="Stored"` で返す
-    - [ ] 新規メソッドが `TABLE_TYPE='BASE TABLE'` の一覧を `Type="MariaDbTable"`, `GitOnly=true` で返す
-    - [ ] `ModuleListResponse.MariaDbTables` が追加され `GetModulesAsync` で設定される
+    - [x] `QueryMariaDbAsync` が `Type="Stored"` で返す
+    - [x] 新規メソッドが `TABLE_TYPE='BASE TABLE'` の一覧を `Type="MariaDbTable"`, `GitOnly=true` で返す
+    - [x] `ModuleListResponse.MariaDbTables` が追加され `GetModulesAsync` で設定される
   - **Verification:**
-    - [ ] `dotnet build` 成功
-    - [ ] ローカル MariaDB 接続時、`GET /api/modules/kaios` のレスポンスに `mariaDbTables` が含まれ、`test_dev` スキーマの実テーブル一覧と一致する
+    - [x] `dotnet build` 成功
+    - [ ] ローカル MariaDB 接続時、`GET /api/modules/kaios` のレスポンスに `mariaDbTables` が含まれ、`test_dev` スキーマの実テーブル一覧と一致する（サンドボックス環境でDB接続不可のため未実施。実環境での確認が必要）
   - **Dependencies:** None（Task 1 と並行可）
   - **Files likely touched:** `backend/Services/ModuleQueryService.cs`, `backend/Models/ModuleInfo.cs`
   - **Estimated scope:** S
 
-- [ ] **Task 3: ManualApplyService / FindDeleteCandidates の DB種別対応**
+- [x] **Task 3: ManualApplyService / FindDeleteCandidates の DB種別対応**
   - **Description:** `ManualApplyService.Register`/`List` と `ModuleQueryService.FindDeleteCandidates` にハードコードされている `config.GitRepoPath` と `"dbo."` プレフィックスを、モジュール種別（SQL Server系 / `MariaDbTable`）に応じて切り替えられるようにする。共通の解決ロジック（GitRepoPath・フォルダ名・ファイル名プレフィックスのマッピング）を導入し、`ManualApplyService.ManualApplyTypes` に `"MariaDbTable"` を追加する。
   - **Acceptance criteria:**
-    - [ ] `MariaDbTable` 種別のモジュールに対し `config.MariaDbGitRepoPath\Table\{Name}.sql`（プレフィックスなし）を正しく解決する
-    - [ ] 既存の SQL Server 系（`Table`/`UserDefinedTableType`）の挙動は変更なし（回帰なし）
-    - [ ] `ManualApplyService.ManualApplyTypes` に `"MariaDbTable"` が含まれる
+    - [x] `MariaDbTable` 種別のモジュールに対し `config.MariaDbGitRepoPath\Table\{Name}.sql`（プレフィックスなし）を正しく解決する
+    - [x] 既存の SQL Server 系（`Table`/`UserDefinedTableType`）の挙動は変更なし（回帰なし。xUnitで明示的に確認）
+    - [x] `ManualApplyService.ManualApplyTypes` に `"MariaDbTable"` が含まれる
+    - [x] （追加実施）`ModuleQueryService.FindDeleteCandidates` も同様に汎用化し `internal` 化（Task 10 でのMariaDB向け呼び出し追加を配線のみで済むように）
   - **Verification:**
-    - [ ] xUnit スモークテスト: `test/Kaios_MariaDB_rep/Table/tm0010catalogno.sql` を対象に `Register` がファイルを正しくコピーすることを確認
-    - [ ] 既存 SQL Server 向けの手動確認（Table 選択→実行→本番前準備画面に表示）で回帰がないことを確認
+    - [x] xUnit スモークテスト: `test/Kaios_MariaDB_rep/Table/tm0010catalogno.sql` を対象に `Register` がファイル名を正しく解決する（DryRunで副作用なく確認）、`FindDeleteCandidates` も同ファイルを削除候補として検出することを確認
+    - [ ] 既存 SQL Server 向けの手動確認（Table 選択→実行→本番前準備画面に表示）（フロントエンド未対応・実環境未接続のため Phase 4 完了時にあわせて実施）
   - **Dependencies:** Task 1（`MariaDbGitRepoPath`）, Task 2（`MariaDbTable` 種別の定義）
   - **Files likely touched:** `backend/Services/ManualApplyService.cs`, `backend/Services/ModuleQueryService.cs`
   - **Estimated scope:** M
 
 ### Checkpoint: Phase 1 完了
-- [ ] `dotnet build` が成功する
-- [ ] `GET /api/modules/kaios` が SQL Server 全種別 + MariaDB（Stored / MariaDbTable）を返す
-- [ ] 既存 SQL Server の Table/UDTT 手動適用フローに回帰がない
+- [x] `dotnet build` が成功する（backend本体・Testsプロジェクトとも0エラー）
+- [x] xUnit 11件成功（DbConfig計算プロパティ、ModuleQueryServiceの空コネクション時挙動、ManualApplyServiceのMariaDbTable/SQL Server両対応、FindDeleteCandidatesの汎用化）
+- [ ] `GET /api/modules/kaios` が SQL Server 全種別 + MariaDB（Stored / MariaDbTable）を返す（実環境での確認が必要、サンドボックスでは未実施）
+- [ ] 既存 SQL Server の Table/UDTT 手動適用フロー回帰なし（UI経由の確認はPhase 4完了時に実施）
 - [ ] 人間によるレビュー後、Phase 2 へ進む
 
 ---

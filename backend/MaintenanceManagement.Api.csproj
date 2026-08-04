@@ -4,6 +4,9 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- backend/Tests は独立したテストプロジェクト（xUnit）。既定のファイルグロブ（Compile/Content等）
+         から丸ごと除外しないと、Web SDK の静的アセット収集が Tests のビルド出力を再帰的に拾ってしまう。 -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);Tests/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>
@@ -13,7 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Compile Remove="Tests\**\*.cs" />
+    <InternalsVisibleTo Include="MaintenanceManagement.Api.Tests" />
   </ItemGroup>
 
 </Project>

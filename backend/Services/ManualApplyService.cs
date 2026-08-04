@@ -13,7 +13,7 @@ namespace MaintenanceManagement.Api.Services;
 /// </summary>
 public class ManualApplyService
 {
-    public static readonly string[] ManualApplyTypes = ["Table", "UserDefinedTableType"];
+    public static readonly string[] ManualApplyTypes = ["Table", "UserDefinedTableType", "MariaDbTable"];
 
     private static readonly HashSet<string> ManualApplyTypeSet =
         new(ManualApplyTypes, StringComparer.OrdinalIgnoreCase);
@@ -60,10 +60,10 @@ public class ManualApplyService
                 StgAppliedBy = executedBy,
             };
 
-            var srcPath = Path.Combine(config.GitRepoPath, module.Type, $"dbo.{module.Name}.sql");
+            var (gitRepoPath, folderName, fileName) = ResolveGitFile(config, module.Type, module.Name);
+            var srcPath = Path.Combine(gitRepoPath, folderName, fileName);
             if (File.Exists(srcPath))
             {
-                var fileName = $"dbo.{module.Name}.sql";
                 var destPath = ResolveManualPath(config, fileName);
                 item.FileName = fileName;
 
@@ -75,7 +75,7 @@ public class ManualApplyService
             }
             else
             {
-                log?.Invoke("WARN", $"Git に定義 SQL が見つかりません: {module.Type}/dbo.{module.Name}.sql");
+                log?.Invoke("WARN", $"Git に定義 SQL が見つかりません: {folderName}/{fileName}");
             }
 
             registered.Add(item);
@@ -105,13 +105,16 @@ public class ManualApplyService
                 var fileName = Path.GetFileName(file);
                 if (known.Contains(fileName)) continue;
 
+                // "dbo."プレフィックスの有無で SQL Server の Table か MariaDbTable かを判別する
+                // （SQL Server は必ずプレフィックス付き、MariaDB は必ずプレフィックスなしの命名規則のため）。
                 var moduleName = Path.GetFileNameWithoutExtension(fileName);
-                if (moduleName.StartsWith("dbo.", StringComparison.OrdinalIgnoreCase))
+                var isMariaDbTable = !moduleName.StartsWith("dbo.", StringComparison.OrdinalIgnoreCase);
+                if (!isMariaDbTable)
                     moduleName = moduleName["dbo.".Length..];
 
                 items.Add(new ManualApplyItem
                 {
-                    ModuleType = "Table",
+                    ModuleType = isMariaDbTable ? "MariaDbTable" : "Table",
                     ModuleName = moduleName,
                     OpType     = "不明",
                     FileName   = fileName,
@@ -224,6 +227,21 @@ public class ManualApplyService
         Directory.CreateDirectory(config.DeployedManualPath);
         var lines = items.Select(i => JsonSerializer.Serialize(i, _jsonOptions));
         File.WriteAllLines(config.DeployedManualManifestPath, lines);
+    }
+
+    /// <summary>
+    /// モジュール種別に応じて、Git リポジトリパス・フォルダ名・ファイル名を解決する。
+    /// SQL Server 系（Table/UserDefinedTableType 等）は GitRepoPath 配下・"dbo."プレフィックス付き、
+    /// MariaDbTable は MariaDbGitRepoPath 配下・実フォルダ名"Table"・プレフィックスなしとなる
+    /// （内部の ModuleType 値 "MariaDbTable" と Git 上の実フォルダ名 "Table" は一致しない）。
+    /// </summary>
+    private static (string GitRepoPath, string FolderName, string FileName) ResolveGitFile(
+        DbConfig config, string moduleType, string moduleName)
+    {
+        if (string.Equals(moduleType, "MariaDbTable", StringComparison.OrdinalIgnoreCase))
+            return (config.MariaDbGitRepoPath, "Table", $"{moduleName}.sql");
+
+        return (config.GitRepoPath, moduleType, $"dbo.{moduleName}.sql");
     }
 
     private static string ResolveManualPath(DbConfig config, string fileName) =>
