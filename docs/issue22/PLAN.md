@@ -69,70 +69,75 @@ MariaDB のストアドプロシージャと Table を、既存の SQL Server �
 
 ### Phase 2: DeployService パイプライン拡張（MariaDB ストアド自動デプロイ）
 
-- [ ] **Task 4: RunPipelineAsync を種別ごとのサブパイプラインに再編**
+- [x] **Task 4: RunPipelineAsync を種別ごとのサブパイプラインに再編**
   - **Description:** `request.Modules` を SQL Server 系 / MariaDB 系（Stored/MariaDbTable）に分割する。Step1（`UpdateModule.txt`/`DeleteModule.txt` 生成）を種別ごとに出力先（`MergePath` / `MariaDbMergePath`）を分けて実行するよう改修する。SQL Server のみのリクエストでは従来と同一の挙動を維持する。
   - **Acceptance criteria:**
-    - [ ] MariaDB モジュールが選択されている場合、`MariaDbMergePath\UpdateModule.txt`/`DeleteModule.txt` が SJIS で生成される
-    - [ ] SQL Server モジュールのみのリクエストでは既存の `MergePath` 出力のみが行われ、ファイル内容・ログ順序が変わらない
+    - [x] MariaDB モジュールが選択されている場合、`MariaDbMergePath\UpdateModule.txt`/`DeleteModule.txt` が SJIS で生成される
+    - [x] SQL Server モジュールのみのリクエストでは既存の `MergePath` 出力のみが行われ、`MariaDbMergePath` フォルダ自体作成されない（回帰なし）
   - **Verification:**
-    - [ ] 新規 xUnit テスト: 混在リクエストで2つの出力ファイルが正しい内容で生成されることを確認
-    - [ ] 手動: DryRun モードで既存 SQL Server 単独デプロイのログが変化しないことを確認（回帰確認）
+    - [x] 新規 xUnit テスト2件: 混在リクエストで2つの出力ファイルが正しい内容で生成されること、SQL Serverのみのリクエストで MariaDB 側フォルダが作られないことを確認
+    - [x] （副次対応）テストプロジェクトで SJIS(CP932) が未登録だったため `CodePagesEncodingProvider` をテストアセンブリ読み込み時に登録する `AssemblyInitializer` を追加（本番は `Program.cs` で登録済みだがテストは経由しないため）
+    - [ ] 手動: DryRun モードで既存 SQL Server 単独デプロイのログが変化しないことを確認（実環境での確認が必要）
   - **Dependencies:** Task 1
   - **Files likely touched:** `backend/Services/DeployService.cs`
   - **Estimated scope:** M
 
-- [ ] **Task 5: MariaDB 用 Step3（git_merge.bat）実行**
+- [x] **Task 5: MariaDB 用 Step3（git_merge.bat）実行**
   - **Description:** MariaDB 系モジュールが含まれる場合に `MariaDbMergePath\git_merge.bat` を実行するサブステップを追加する。既存の `Step3_GitMerge`/`RunBatAsync` パターンをそのまま流用する。
   - **Acceptance criteria:**
-    - [ ] MariaDB モジュール選択時、`test/SourceControl/merge_MariaDB/git_merge.bat` が実行される
-    - [ ] SQL Server のみの場合は実行されない（不要な bat 実行をしない）
+    - [x] MariaDB モジュール選択時、`MariaDbMergePath\git_merge.bat` が実行される（xUnitではスタブbatで検証。実運用の `test/SourceControl/merge_MariaDB/git_merge.bat` は末尾に `pause` を含みテスト実行がハングするため、自動テストでは直接使用していない）
+    - [x] SQL Server のみの場合は実行されない（不要な bat 実行をしない）
   - **Verification:**
-    - [ ] DryRun モードでログにステップが表示されることを確認
-    - [ ] 実行環境で `git_merge.bat` が正常終了することを確認（ローカル `test/Kaios_MariaDB_rep` を対象リポジトリとして設定）
+    - [x] xUnit テスト2件（混在時に両方のbatが実行される／SQLServerのみの場合はMariaDB側が実行されない）
+    - [ ] 実行環境で実際の `git_merge.bat`（`test/SourceControl/merge_MariaDB/`）が正常終了することを確認（実環境での確認が必要。`pause` の扱いも含め要確認）
   - **Dependencies:** Task 4
   - **Files likely touched:** `backend/Services/DeployService.cs`
   - **Estimated scope:** S
 
-- [ ] **Task 6: MariaDB 用 SQL 変換（コピー / DROP生成）**
+- [x] **Task 6: MariaDB 用 SQL 変換（コピー / DROP生成）**
   - **Description:** MariaDB のストアドプロシージャについて、新規・更新は `git checkout` 済みファイルをそのまま `MariaDbDeploySourcePath` へコピーし、削除は `DROP PROCEDURE IF EXISTS` の単独SQLを生成する処理を追加する（SQL Server の `ConvertAlterToCreate` に相当する変換は不要）。
   - **Acceptance criteria:**
-    - [ ] 新規/更新モジュールが `MariaDbGitRepoPath\Stored\{Name}.sql` から `MariaDbDeploySourcePath\{Name}.sql` へそのままコピーされる
-    - [ ] 削除モジュールに対し `DROP PROCEDURE IF EXISTS \`{Name}\`;` が UTF-8 で生成される
+    - [x] 新規/更新モジュールが `MariaDbGitRepoPath\Stored\{Name}.sql` から `MariaDbDeploySourcePath\{Name}.sql` へそのままコピーされる
+    - [x] 削除モジュールに対し `DROP PROCEDURE IF EXISTS \`{Name}\`;` が UTF-8 で生成される
   - **Verification:**
-    - [ ] xUnit テスト: `test/Kaios_MariaDB_rep/Stored/*.sql` を入力にコピー結果・DROP文生成結果を検証
+    - [x] xUnit テスト2件: 新規作成した一時Gitリポジトリのファイルをコピーする挙動・削除時のDROP文生成を確認（`test/Kaios_MariaDB_rep` は今回は使わず一時ディレクトリで検証。同フィクスチャを使った検証はTask7以降のE2Eテストで実施予定）
   - **Dependencies:** Task 4
   - **Files likely touched:** `backend/Services/DeployService.cs`
   - **Estimated scope:** S
 
-- [ ] **Task 7: MariaDB 用 deploy.bat 作成 + mysql CLI 実行・ロールバック**
-  - **Description:** mysql CLI（`mysql.exe`）を1ファイルずつ実行し、`START TRANSACTION`/`COMMIT` でラップするか、非ゼロ終了コード時に `git checkout` で該当ファイルのみ巻き戻す新規 `deploy.bat` をテストフィクスチャとして作成する。`DeployService` の Step5 相当を `RunBatAsync` で実行できるようにする。
+- [x] **Task 7: MariaDB 用 deploy.bat 作成 + mysql CLI 実行・ファイル単位の成否管理**
+  - **Description:** MariaDBのDDL（CREATE/DROP PROCEDURE）はトランザクション非対応のため、DBレベルの自動ロールバックは行わない（SPEC.md Assumption 5 参照）。代わりに、deploy.bat は `MariaDbDeploySourcePath` 配下のSQLを1ファイルずつ mysql CLI で適用し、ファイルごとの成否を `RESULT:OK:{file}` / `RESULT:FAIL:{file}` という形式で標準出力に明示する。bat 自体は個々のファイル失敗では停止せず、常に exit code 0 で終了する（致命的なエラー、例: mysql.exe が見つからない、接続不可、等は非ゼロ終了させ全体を異常終了させる）。`DeployService` 側は `RunBatAsync` の出力行を解析して成否マップを構築できるよう、既存の `RunBatAsync` を「捕捉した標準出力行を返す」形に拡張する（既存の3呼び出し元は戻り値を無視するだけで動作は変わらない）。
   - **Acceptance criteria:**
-    - [ ] `test/SourceControl/Deploy_DEV2STG/MariaDB/ForNewCreation/deploy.bat` が新規作成され、`MariaDbDeploySourcePath` 配下のSQLを1ファイルずつ適用する
-    - [ ] 適用失敗時、失敗したファイルの変更のみロールバックされ、他の成功済みファイルは維持される
-    - [ ] mysql コマンドの終了コード・stderr がSSEログに転送される
+    - [x] `test/SourceControl/Deploy_DEV2STG/MariaDB/ForNewCreation/deploy.bat` が新規作成され、`MariaDbDeploySourcePath` 配下のSQLを1ファイルずつ適用し `RESULT:` 行を出力する
+    - [x] `RunBatAsync` が標準出力行のリストを返せるように拡張され、既存の3呼び出し元（Step2/Step3/Step5 SQLServer）の挙動が変わらない
+    - [x] `DeployService` が `RESULT:` 行を解析し、ファイル名→成否のマップを構築する。マーカーが出力されなかったファイルは失敗扱いにする（フェイルセーフ）
+    - [x] 1ファイルの失敗が他のファイルの適用を止めない（bat・DeployService双方で継続実行を保証）
+    - [x] mysql コマンドの標準エラー出力がSSEログに転送される（既存の `RunBatAsync` の stderr→WARN 転送をそのまま利用）
   - **Verification:**
-    - [ ] ローカル MariaDB（`test_dev`）に対し1件の正常な適用が成功することを実機確認
-    - [ ] 故意に SQL 構文エラーを混入させ、そのファイルのみロールバックされ他は成功することを実機確認
+    - [x] xUnit テスト4件: `RESULT:` 行の解析（正常系・マーカー欠落時のフェイルセーフ）、スタブbatを使った成否振り分けの統合テスト
+    - [ ] ローカル MariaDB（`test_dev`）に対し1件の正常な適用が成功することを実機確認（実環境が必要、未実施）
+    - [ ] 故意に SQL 構文エラーを混入させ、そのファイルのみ失敗扱いとなり他は成功することを実機確認。DROP成功→CREATE失敗時にプロシージャが一時的に欠落する既知のリスクも実機で確認しログに残す（実環境が必要、未実施）
   - **Dependencies:** Task 6
   - **Files likely touched:** `test/SourceControl/Deploy_DEV2STG/MariaDB/ForNewCreation/deploy.bat`（新規）, `backend/Services/DeployService.cs`
   - **Estimated scope:** M
 
-- [ ] **Task 8: Step6（deployedへの移動）を MariaDbDeployedPath に対応**
-  - **Description:** 適用成功した MariaDB ファイルを、既存の `config.MariaDbDeployedPath` へ移動する処理を追加する。
+- [x] **Task 8: Step6（deployedへの移動）を MariaDbDeployedPath に対応**
+  - **Description:** Task 7 で得られたファイル単位の成否マップを使い、適用成功した MariaDB ファイルのみ既存の `config.MariaDbDeployedPath` へ移動する処理を追加する。失敗したファイルは移動せず `MariaDbDeploySourcePath` に残す（次回再適用の対象として認識できるように）。
   - **Acceptance criteria:**
-    - [ ] 成功したファイルが `MariaDbDeploySourcePath` から `MariaDbDeployedPath` へ移動される
-    - [ ] 既存の「本番前準備」画面（`FastCopyService`/`PrepareController`）が変更なしでこのファイルを認識できる
+    - [x] 成功したファイルのみ `MariaDbDeploySourcePath` から `MariaDbDeployedPath` へ移動される
+    - [x] 失敗したファイルは移動されず、WARNログが出力される
+    - [ ] 既存の「本番前準備」画面（`FastCopyService`/`PrepareController`）が変更なしでこのファイルを認識できる（コード上は同一の `MariaDbDeployedPath` を参照しているため成立するはずだが、実環境での画面確認は未実施）
   - **Verification:**
-    - [ ] 手動確認: 適用後に本番前準備画面へ遷移し、MariaDB ファイルが一覧表示されることを確認
-    - [ ] xUnit テスト: 移動処理の単体確認
+    - [ ] 手動確認: 適用後に本番前準備画面へ遷移し、MariaDB ファイルが一覧表示されることを確認（実環境が必要、未実施。フロントエンドはPhase4で対応）
+    - [x] xUnit テスト: Task 7 と合わせて成功/失敗ファイルの振り分け・移動を確認（`Step5And6_MovesOnlySuccessfulFiles_ToDeployed`）
   - **Dependencies:** Task 7
   - **Files likely touched:** `backend/Services/DeployService.cs`
   - **Estimated scope:** XS
 
 ### Checkpoint: Phase 2 完了
-- [ ] MariaDB のストアドプロシージャを DryRun で選択→実行し、6ステップすべてがエラーなく完了する
-- [ ] ローカル MariaDB 実環境で1件の新規/更新/削除が実際に適用できる
-- [ ] 既存の SQL Server 単独デプロイフローに回帰がない
+- [x] MariaDB のストアドプロシージャ選択→実行の全パイプライン（Step1〜6）がユニットテスト上でエラーなく完了する（xUnit 21件成功、`dotnet build` 0エラー）
+- [ ] ローカル MariaDB 実環境で1件の新規/更新/削除が実際に適用できる（実環境が必要、未実施）
+- [ ] 既存の SQL Server 単独デプロイフローに回帰がない（フロントエンドが未対応のためUI経由の確認はPhase4完了時に実施。バックエンド単体では既存ロジックの構造を維持しつつ分岐追加のみ）
 - [ ] 人間によるレビュー後、Phase 3 へ進む
 
 ---
@@ -237,6 +242,7 @@ MariaDB のストアドプロシージャと Table を、既存の SQL Server �
 | `ManualApplyService`/`FindDeleteCandidates` の汎用化が既存 SQL Server 動作に回帰を起こす | High | Task 3 で既存 SQL Server 向けの手動確認を必須項目として明記。可能ならリファクタ前後で同一入力の出力比較を行う |
 | MariaDB 用 `deploy.bat` の運用環境への事前配置が遅れ、本番相当環境でのE2E検証ができない | Medium | Ask first 事項として早期に運用担当者と配置手順・タイミングを確認（Open Question 3） |
 | `DeployService.RunPipelineAsync` の種別分岐リファクタが大きく、既存SQL Serverフローに予期せぬ影響を与える | High | Task 4 で「SQL Serverのみのリクエストでは挙動が変わらない」ことを明示的な回帰確認項目とする |
+| `test/SourceControl/merge_MariaDB/git_merge.bat`（既存フィクスチャ）の末尾に `pause` があり、`RunBatAsync` はコンソールのないプロセス（IIS/Kestrel）から非対話的に実行する前提のため、本番用 `git_merge.bat`/MariaDB用`deploy.bat` に同様の `pause`/対話待ちコマンドが残っているとハングしうる（SQL Server用の既存 `git_merge.bat` には `pause` がなく非対話実行前提になっている点と対照的） | High | Task 5〜7 着手時、運用担当者に「本システムから実行するbatは対話待ちコマンドを含めない」ことを明示的に確認・依頼する |
 
 ## Open Questions（SPEC.md から引き継ぎ・実装時に確定させる）
 

@@ -21,7 +21,7 @@
 - Web UI の STG 適用画面で、SQL Server と MariaDB 両方のモジュール（MariaDB はストアドプロシージャと Table の双方）がツリーに表示され、同じ画面から選択できる。
 - SQL Server / MariaDB のモジュールを同時に選択して1回の実行操作を行うと、両方の DB への適用が（それぞれ独立して）完了する。MariaDB の Table は Git マージのみ行われ、SQL Server の Table/UserDefinedTableType と同様に本番前準備画面での手動適用待ちとして登録される。
 - 適用失敗時にエラー内容（mysql コマンドの終了コード・標準エラー出力）がログに残り、原因調査ができる。
-- 失敗したファイルの変更は自動ロールバックされ、DB が中途半端な状態にならない。
+- 失敗したファイルはファイル単位で「未適用」として扱われ、`deployed` へは移動されない（成功したファイルのみ移動される）。MariaDBのDDLはトランザクション非対応のため、DBレベルの自動ロールバックは行わない（Assumption 5参照）。
 
 ### 対象範囲の整理（SQL Server との対比）
 
@@ -51,7 +51,8 @@
 2. `ModuleQueryService.QueryMariaDbAsync` が返す `ModuleInfo.Type` を現行の `"MariaDB"` から `"Stored"` に変更する（`git_merge.bat` が `UpdateModule.txt` の Type 列をフォルダ名として使うため、`Kaios_MariaDB_rep\Stored\{name}.sql` という実際のフォルダ構成と一致させる必要がある）。フロントエンドの `ModuleType` 型・`DeployStg.tsx` の `MODULE_TYPES` 配列・`api/modules.ts` も `'Stored'` に追随させる。画面上の種別タブ表示名は `Type` 値と切り離し、表示名マッピングで `"MariaDB"` と表示する。
 3. `Export.py` が生成する SQL ファイルは既に `DROP ... IF EXISTS` + `CREATE DEFINER=... PROCEDURE/FUNCTION ...` の完全な定義（1ファイル=1オブジェクトの完成形、`test/Kaios_MariaDB_rep/Stored/*.sql` で確認済み）になっているため、SQL Server の `ConvertAlterToCreate`（ALTER→CREATE 変換）に相当する変換処理は不要で、`git checkout` 済みファイルをそのまま `MariaDbDeploySourcePath` へコピーするだけでよい（新規・更新とも同じ扱い）。削除操作（OpType="削除"）の場合のみ `DROP PROCEDURE/FUNCTION IF EXISTS \`{Name}\`;` の単独 SQL を生成する。
 4. MariaDB 用 `deploy.bat` は mysql CLI（`mysql.exe`）を呼び出す新規バッチとして作成し、既存の `RunBatAsync`（cmd.exe 経由・SJIS chcp・標準出力/エラーをログ転送）でそのまま実行できる構造にする。接続情報（ホスト・ユーザー・パスワード）は bat 側に事前設定してもらう＝SQL Server の `deploy.bat`（sqlcmd）と同じ運用ポリシーを踏襲し、`DbConfig` に STG 用の新規接続文字列は追加しない。
-5. ロールバックは「1ファイル=1トランザクション」。mysql CLI 実行時に `mysql --execute="START TRANSACTION; SOURCE {file}; COMMIT;"` 相当でラップするか、アプリ側で1ファイルずつ `mysql` プロセスを実行し非ゼロ終了コードでそのファイルのみ `git checkout` により巻き戻す。具体的な実装方式は Plan フェーズで確定する。
+5. **【変更】ロールバックはDBトランザクションではなく「ファイル単位の成否管理」で実現する。** MariaDB(MySQL系)の `CREATE PROCEDURE`/`DROP PROCEDURE` 等のDDLはトランザクション非対応（実行時に暗黙コミットされる）ため、`START TRANSACTION`でラップしても実効的なロールバックにはならない。かつ Export.py が生成するファイルは `DROP IF EXISTS` の直後に `CREATE` を行う構成のため、**DROPが成功した直後にCREATEが失敗すると、そのプロシージャがDBから一時的に欠落する**リスクは技術的に排除できない（MySQL/MariaDBの仕様上の制約）。
+   このリスクを踏まえ、deploy.bat は1ファイルずつ mysql CLI を実行し、ファイルごとの成否（`RESULT:OK:{file}` / `RESULT:FAIL:{file}`）を標準出力に明示する。アプリ側はこの出力を解析し、成功したファイルのみ `deployed` へ移動、失敗したファイルは移動せず次回再適用の対象として残す。1件の失敗が他のファイルの適用を止めない（全体を中断しない）。
 6. **SQL Server と MariaDB の混在選択・実行**: 1回の `DeployRequest` に SQL Server 系モジュール（StoredProcedure/Function/VIEW/Table/UserDefinedTableType）と MariaDB 系モジュール（Stored）が混在することを許可する。`DeployService` は Step1（モジュール一覧ファイル生成）で種別ごとに出力先を分け（SQL Server → `MergePath`、MariaDB → `MariaDbMergePath`）、Step3〜6 は種別ごとに独立したサブパイプラインとして順次実行する。SQL Server 側が失敗しても MariaDB 側は独立して最後まで実行し、逆も同様（どちらか一方の失敗が他方をブロックしない）。セッション全体のステータスは、いずれかの種別が失敗した場合は `failed` とし、ログ・実行履歴には種別ごとの成否を区別して記録する。
 7. `MariaDbGitRepoPath` のローカル開発・検証用の値には `test/Kaios_MariaDB_rep`（実データを含む既存フィクスチャ）を使用し、mysql CLI がここから checkout・適用されたファイルを実際に読み込んで実行できることを確認する。本番相当環境では `D:\STGENV\Kaios_MariaDB_rep` 等の実クローンパスを設定する。
 8. ファイル読み書きの文字コードは MariaDB 側は UTF-8 とする（`Export.py` 出力に合わせる）。`UpdateModule.txt`/`DeleteModule.txt` 生成のみ既存仕様通り SJIS(CP932) を維持する（Step1 は SQL Server と共通処理のため）。
@@ -136,7 +137,7 @@ MariaDB版もこの構造に揃え、`config.MariaDbDeployBatPath` 等の計算�
   - Table・UserDefinedTableType・MariaDbTable は Git マージのみ（自動適用しない）。危険なため自動デプロイ対象に含めない方針は SQL Server／MariaDB 共通
   - ファイル書き込みは既存仕様に合わせる（UpdateModule.txt等はSJIS、Export.py生成物はUTF-8）
   - 実行前は必ず確認ダイアログを表示
-  - 1ファイル=1トランザクションで自動ロールバック
+  - MariaDBはファイル単位の成否管理（DBトランザクションでの自動ロールバックではない。Assumption 5参照）
   - 複数DBの実行は順次実行（並列実行しない）。同一実行内のSQLServer/MariaDBサブパイプラインも順次実行とする
 - **Ask first:**
   - MariaDB用 `deploy.bat` の配置場所・実行環境（運用担当者側での事前配置が必要なため、配置手順の確定は要相談）
@@ -151,7 +152,7 @@ MariaDB版もこの構造に揃え、`config.MariaDbDeployBatPath` 等の計算�
 - [ ] SQL Server と MariaDB のモジュールを同時選択して実行すると、両方への適用が完了する（一方が失敗しても他方は最後まで実行される）
 - [ ] MariaDB の Table を選択して実行すると、Git マージのみが行われ、本番前準備画面の手動適用待ち一覧に SQL Server の Table/UDTT と同様に表示される
 - [ ] 適用失敗時、エラーメッセージ（mysqlコマンドの終了コード・stderr）がSSEログに表示される
-- [ ] 適用失敗したファイルは自動的にロールバックされ、他の成功済みファイルは維持される
+- [ ] 適用失敗したファイルは `deployed` へ移動されず未適用のまま残り、他の成功済みファイルは `deployed` へ移動される（DBレベルの自動ロールバックではなくファイル単位の成否管理）
 - [ ] 適用成功したストアドプロシージャは既存の `MariaDbDeployedPath` に移動され、実行履歴に記録される
 - [ ] mysql CLI が `test/Kaios_MariaDB_rep` 配下の実ファイルに対して実際に適用処理を実行できる（ローカル検証）
 - [ ] DryRunモードで一連の流れをエラーなくシミュレーションできる
