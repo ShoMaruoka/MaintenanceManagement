@@ -21,6 +21,9 @@ public class DbConfig
     // MariaDB（DevDB のみ対象）
     public string MariaDbConnectionString { get; set; } = "";
 
+    /// <summary>MariaDB 用 Git リポジトリのパス（SQL Server の GitRepoPath とは別リポジトリ）。</summary>
+    public string MariaDbGitRepoPath { get; set; } = "";
+
     // ファイルパス
     public string SourceControlPath { get; set; } = "";
     public string GitRepoPath { get; set; } = "";
@@ -49,6 +52,15 @@ public class DbConfig
     public string MariaDbSourcePath => Path.Combine(DeployDev2StgPath, "MariaDB");
     public string MariaDbDeployedPath => Path.Combine(MariaDbSourcePath, "deployed");
     public string MariaDbDeployedHoldPath => Path.Combine(MariaDbSourcePath, "deployed_hold");
+
+    /// <summary>MariaDB 用 UpdateModule.txt / DeleteModule.txt の出力先（merge と同階層）。</summary>
+    public string MariaDbMergePath => Path.Combine(SourceControlPath, "merge_MariaDB");
+    /// <summary>MariaDB 用 deploy.bat・適用対象 SQL の配置ルート。</summary>
+    public string MariaDbForNewCreationPath => Path.Combine(MariaDbSourcePath, "ForNewCreation");
+    /// <summary>MariaDB 用 SQL 変換後の適用対象コピー先。</summary>
+    public string MariaDbDeploySourcePath => Path.Combine(MariaDbForNewCreationPath, "Source");
+    /// <summary>MariaDB 用 deploy.bat（mysql CLI 呼び出し）のパス。事前配置・本システムは作成しない。</summary>
+    public string MariaDbDeployBatPath => Path.Combine(MariaDbForNewCreationPath, "deploy.bat");
     /// <summary>STG 側静的ファイル保管先（DeployDev2StgPath\Files）。</summary>
     public string FilesPath => Path.Combine(DeployDev2StgPath, "Files");
 
