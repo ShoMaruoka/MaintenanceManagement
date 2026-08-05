@@ -28,7 +28,9 @@ const MODULE_TYPE_LABELS: Partial<Record<ModuleType, string>> = {
 
 const GIT_ONLY_TYPES: ModuleType[] = ['Table', 'UserDefinedTableType', 'MariaDbTable']
 
-const OP_TYPES: OpType[] = ['更新', '新規', '削除']
+// ユーザーが操作区分ドロップダウンで選べる値。
+// 「削除」は削除候補モジュール（別ルート）で自動設定されるため、選択肢からは除外する。
+const SELECTABLE_OP_TYPES: OpType[] = ['更新', '新規']
 
 type PageState = 'select' | 'confirm' | 'log' | 'done'
 
@@ -310,7 +312,7 @@ export default function DeployStg() {
                     style={{ fontSize: 12, padding: '2px 4px' }}
                   >
                     <option value="" disabled>選択...</option>
-                    {OP_TYPES.map(op => (
+                    {SELECTABLE_OP_TYPES.map(op => (
                       <option key={op} value={op}>{op}</option>
                     ))}
                   </select>
@@ -368,7 +370,7 @@ export default function DeployStg() {
                             className={`op-badge op-badge-${opType === '更新' ? 'update' : opType === '新規' ? 'new' : 'delete'}`}
                             style={{ border: 'none', outline: 'none', appearance: 'none', cursor: 'pointer', paddingRight: 14 }}
                           >
-                            {OP_TYPES.map(op => (
+                            {SELECTABLE_OP_TYPES.map(op => (
                               <option key={op} value={op}>{op}</option>
                             ))}
                           </select>
