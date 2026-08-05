@@ -14,6 +14,10 @@ public class DeployService
     private static readonly HashSet<string> GitOnlyTypes =
         new(ManualApplyService.ManualApplyTypes, StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>MariaDB 系のモジュール種別（ストアド・ファンクション・Table）。Step1 の出力先振り分けに使用する。</summary>
+    private static readonly HashSet<string> MariaDbTypes =
+        new(["Stored", "MariaDbFunction", "MariaDbTable"], StringComparer.OrdinalIgnoreCase);
+
     // DB ごとの実行中フラグ（重複リクエスト防止）
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> _dbLocks = new();
 
@@ -61,14 +65,20 @@ public class DeployService
         string dryRunTag = _dryRun ? " [DRY-RUN]" : "";
         var deployModules = request.Modules.Where(m => !GitOnlyTypes.Contains(m.Type)).ToList();
         var gitOnlyModules = request.Modules.Where(m => GitOnlyTypes.Contains(m.Type)).ToList();
+        var sqlServerModules = request.Modules.Where(m => !MariaDbTypes.Contains(m.Type)).ToList();
+        var mariaDbModules = request.Modules.Where(m => MariaDbTypes.Contains(m.Type)).ToList();
+        var sqlServerDeployModules = deployModules.Where(m => !MariaDbTypes.Contains(m.Type)).ToList();
+        var mariaDbDeployModules = deployModules.Where(m => MariaDbTypes.Contains(m.Type)).ToList();
 
         try
         {
             await Log(writer, "INFO", $"セッション開始{dryRunTag}  db={dbConfig.Name}  user={executedBy}");
 
-            // Step 1: Generate module txt files
+            // Step 1: Generate module txt files（SQL Server / MariaDB で出力先を分ける）
             await Log(writer, "STEP", "1/6 UpdateModule.txt / DeleteModule.txt を生成 (SJIS/CP932)", "generate");
-            await Step1_GenerateModuleFiles(writer, dbConfig, request, dryRunTag);
+            await Step1_GenerateModuleFiles(writer, dbConfig.MergePath, sqlServerModules, dryRunTag);
+            if (mariaDbModules.Count > 0)
+                await Step1_GenerateModuleFiles(writer, dbConfig.MariaDbMergePath, mariaDbModules, dryRunTag);
             await Log(writer, "OK", "生成完了", stepDone: "generate");
 
             // Step 2: git Live Updates
@@ -76,16 +86,18 @@ public class DeployService
             await Step2_GitLiveUpdates(writer, dbConfig, dryRunTag, ct);
             await Log(writer, "OK", "Live Updates 完了", stepDone: "git-update");
 
-            // Step 3: git merge
+            // Step 3: git merge（SQL Server / MariaDB それぞれの merge フォルダで実行）
             await Log(writer, "STEP", "3/6 git_merge.bat 実行", "merge");
             if (gitOnlyModules.Count > 0)
                 await Log(writer, "INFO", $"Git マージのみ対象: {string.Join(", ", gitOnlyModules.Select(m => m.Name))}");
-            await Step3_GitMerge(writer, dbConfig, request, dryRunTag, ct);
+            await Step3_GitMerge(writer, dbConfig.MergePath, dryRunTag, ct);
+            if (mariaDbModules.Count > 0)
+                await Step3_GitMerge(writer, dbConfig.MariaDbMergePath, dryRunTag, ct);
             if (gitOnlyModules.Count > 0)
                 await Step3b_RegisterManualApply(writer, dbConfig, gitOnlyModules, executedBy, dryRunTag);
             await Log(writer, "OK", $"merge 完了  ({request.Modules.Count} files changed)", stepDone: "merge");
 
-            // Step 4: SQL convert
+            // Step 4: SQL convert（SQL Server / MariaDB で変換ロジックを分ける）
             await Log(writer, "STEP", "4/6 SQL ファイルをコピー・変換", "sql-convert");
             if (deployModules.Count == 0)
             {
@@ -93,17 +105,25 @@ public class DeployService
             }
             else
             {
-                await Step4_SqlConvert(writer, dbConfig, deployModules, dryRunTag);
+                if (sqlServerDeployModules.Count > 0)
+                    await Step4_SqlConvert(writer, dbConfig, sqlServerDeployModules, dryRunTag);
+                if (mariaDbDeployModules.Count > 0)
+                    await Step4_SqlConvertMariaDb(writer, dbConfig, mariaDbDeployModules, dryRunTag);
             }
             await Log(writer, "OK", "SQL 変換完了", stepDone: "sql-convert");
 
-            // Step 5: deploy.bat
+            // Step 5: deploy.bat（SQL Server / MariaDB で実行方式が異なる）
             await Log(writer, "STEP", "5/6 deploy.bat 実行中…", "deploy");
-            await Step5_Deploy(writer, dbConfig, deployModules, dryRunTag, ct);
+            await Step5_Deploy(writer, dbConfig, sqlServerDeployModules, dryRunTag, ct);
+            Dictionary<string, bool>? mariaDbDeployResults = null;
+            if (mariaDbDeployModules.Count > 0)
+                mariaDbDeployResults = await Step5_DeployMariaDb(writer, dbConfig, mariaDbDeployModules, dryRunTag, ct);
 
             // Step 6: move to deployed/
             await Log(writer, "STEP", "6/6 適用済みファイルを deployed/ へ移動", "record");
-            await Step6_MoveToDeployed(writer, dbConfig, deployModules, dryRunTag);
+            await Step6_MoveToDeployed(writer, dbConfig, sqlServerDeployModules, dryRunTag);
+            if (mariaDbDeployModules.Count > 0)
+                await Step6_MoveToDeployedMariaDb(writer, dbConfig, mariaDbDeployModules, mariaDbDeployResults!, dryRunTag);
             await Log(writer, "OK", "移動完了");
             await Log(writer, "INFO", "実行結果を DB に記録中");
             await Log(writer, "OK", "✅ STG 適用が完了しました", stepDone: "record");
@@ -123,14 +143,14 @@ public class DeployService
         }
     }
 
-    private async Task Step1_GenerateModuleFiles(ChannelWriter<LogEntry> w, DbConfig config, DeployRequest request, string tag)
+    private async Task Step1_GenerateModuleFiles(ChannelWriter<LogEntry> w, string mergePath, List<DeployModule> modules, string tag)
     {
         var sjis = Encoding.GetEncoding("shift_jis");
-        var updateModules = request.Modules.Where(m => m.OpType != "削除").ToList();
-        var deleteModules = request.Modules.Where(m => m.OpType == "削除").ToList();
+        var updateModules = modules.Where(m => m.OpType != "削除").ToList();
+        var deleteModules = modules.Where(m => m.OpType == "削除").ToList();
 
-        var updatePath = Path.Combine(config.MergePath, "UpdateModule.txt");
-        var deletePath = Path.Combine(config.MergePath, "DeleteModule.txt");
+        var updatePath = Path.Combine(mergePath, "UpdateModule.txt");
+        var deletePath = Path.Combine(mergePath, "DeleteModule.txt");
 
         await Log(w, "DETAIL", $"→ {updatePath}  ({updateModules.Count} modules){tag}");
         if (deleteModules.Count > 0)
@@ -138,7 +158,7 @@ public class DeployService
 
         if (!_dryRun)
         {
-            Directory.CreateDirectory(config.MergePath);
+            Directory.CreateDirectory(mergePath);
             await File.WriteAllTextAsync(updatePath, string.Join("\r\n", updateModules.Select(m => $"{m.Type},{m.Name}")), sjis);
             await File.WriteAllTextAsync(deletePath, string.Join("\r\n", deleteModules.Select(m => $"{m.Type},{m.Name}")), sjis);
         }
@@ -158,9 +178,9 @@ public class DeployService
         await RunBatAsync(w, batPath, config.SourceControlPath, ct);
     }
 
-    private async Task Step3_GitMerge(ChannelWriter<LogEntry> w, DbConfig config, DeployRequest request, string tag, CancellationToken ct)
+    private async Task Step3_GitMerge(ChannelWriter<LogEntry> w, string mergePath, string tag, CancellationToken ct)
     {
-        var batPath = Path.Combine(config.MergePath, "git_merge.bat");
+        var batPath = Path.Combine(mergePath, "git_merge.bat");
         await Log(w, "DETAIL", $"→ {batPath}{tag}");
 
         if (_dryRun)
@@ -169,7 +189,7 @@ public class DeployService
             await Log(w, "DETAIL", "[DRY-RUN] Merge simulated (no actual git operation)");
             return;
         }
-        await RunBatAsync(w, batPath, config.MergePath, ct);
+        await RunBatAsync(w, batPath, mergePath, ct);
     }
 
     /// <summary>
@@ -221,6 +241,40 @@ public class DeployService
         }
     }
 
+    /// <summary>
+    /// MariaDB ストアドプロシージャの SQL 変換。Git 上のファイルは既に
+    /// DROP IF EXISTS + CREATE の完成形（Export.py 生成）のため、新規/更新はそのままコピーする。
+    /// 削除のみ DROP 単独 SQL を生成する（SJIS ではなく UTF-8。Export.py 出力に合わせる）。
+    /// </summary>
+    private async Task Step4_SqlConvertMariaDb(ChannelWriter<LogEntry> w, DbConfig config, List<DeployModule> modules, string tag)
+    {
+        Directory.CreateDirectory(config.MariaDbDeploySourcePath);
+        foreach (var m in modules)
+        {
+            var srcPath = Path.Combine(config.MariaDbGitRepoPath, "Stored", $"{m.Name}.sql");
+            var destPath = Path.Combine(config.MariaDbDeploySourcePath, $"{m.Name}.sql");
+
+            if (m.OpType == "削除")
+            {
+                await Log(w, "DETAIL", $"→ {m.Name}.sql  [削除] DROP 文を生成{tag}");
+                if (!_dryRun) await GenerateMariaDbDropSql(m, destPath);
+            }
+            else
+            {
+                await Log(w, "DETAIL", $"→ {m.Name}.sql  [{m.OpType}] copy{tag}");
+                if (!_dryRun) File.Copy(srcPath, destPath, overwrite: true);
+            }
+        }
+    }
+
+    private static async Task GenerateMariaDbDropSql(DeployModule m, string destPath)
+    {
+        var verb = string.Equals(m.Type, "MariaDbFunction", StringComparison.OrdinalIgnoreCase) ? "FUNCTION" : "PROCEDURE";
+        var sql = $"DROP {verb} IF EXISTS `{m.Name}`;";
+        Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
+        await File.WriteAllTextAsync(destPath, sql + "\r\n", Encoding.UTF8);
+    }
+
     private async Task Step5_Deploy(ChannelWriter<LogEntry> w, DbConfig config, List<DeployModule> deployModules, string tag, CancellationToken ct)
     {
         if (deployModules.Count == 0)
@@ -240,6 +294,81 @@ public class DeployService
         }
         await RunBatAsync(w, batPath, config.ForNewCreationPath, ct);
         await Log(w, "OK", "deploy.bat 完了 (exit code 0)", stepDone: "deploy");
+    }
+
+    /// <summary>
+    /// MariaDB 用 deploy.bat を実行する。MariaDB の DDL はトランザクション非対応のため
+    /// DB レベルの自動ロールバックはできない（SPEC.md Assumption 5）。deploy.bat は1ファイルずつ
+    /// mysql CLI を実行し、"RESULT:OK:xxx.sql" / "RESULT:FAIL:xxx.sql" 形式で成否を標準出力する
+    /// 前提で、その行を解析してモジュール名→成否のマップを返す。
+    /// </summary>
+    private async Task<Dictionary<string, bool>> Step5_DeployMariaDb(
+        ChannelWriter<LogEntry> w, DbConfig config, List<DeployModule> mariaDbDeployModules, string tag, CancellationToken ct)
+    {
+        var batPath = config.MariaDbDeployBatPath;
+        await Log(w, "DETAIL", $"→ {batPath}{tag}");
+
+        if (_dryRun)
+        {
+            await Task.Delay(600, ct);
+            await Log(w, "INFO", "[DRY-RUN] MariaDB deploy.bat スキップ (exit code 0 simulated)");
+            return mariaDbDeployModules.ToDictionary(m => m.Name, _ => true, StringComparer.OrdinalIgnoreCase);
+        }
+
+        var lines = await RunBatAsync(w, batPath, config.MariaDbForNewCreationPath, ct);
+        var results = ParseMariaDbDeployResults(lines, mariaDbDeployModules);
+
+        var failed = results.Where(r => !r.Value).Select(r => r.Key).ToList();
+        if (failed.Count > 0)
+            await Log(w, "WARN", $"MariaDB 適用失敗: {string.Join(", ", failed)}{tag}");
+        await Log(w, "OK", $"MariaDB deploy.bat 完了（成功 {results.Count(r => r.Value)}/{results.Count}）");
+
+        return results;
+    }
+
+    /// <summary>
+    /// "RESULT:OK:xxx.sql" / "RESULT:FAIL:xxx.sql" 形式の行を解析する。
+    /// マーカーが出力されなかったファイル（bat のクラッシュ等）はフェイルセーフとして失敗扱いにする。
+    /// </summary>
+    internal static Dictionary<string, bool> ParseMariaDbDeployResults(List<string> lines, List<DeployModule> modules)
+    {
+        var results = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        foreach (var line in lines)
+        {
+            var parts = line.Split(':', 3);
+            if (parts.Length < 3 || !string.Equals(parts[0], "RESULT", StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            var moduleName = Path.GetFileNameWithoutExtension(parts[2].Trim());
+            results[moduleName] = string.Equals(parts[1], "OK", StringComparison.OrdinalIgnoreCase);
+        }
+
+        foreach (var m in modules)
+            results.TryAdd(m.Name, false);
+
+        return results;
+    }
+
+    private async Task Step6_MoveToDeployedMariaDb(
+        ChannelWriter<LogEntry> w, DbConfig config, List<DeployModule> mariaDbDeployModules,
+        Dictionary<string, bool> results, string tag)
+    {
+        if (!_dryRun) Directory.CreateDirectory(config.MariaDbDeployedPath);
+        foreach (var m in mariaDbDeployModules)
+        {
+            var success = results.TryGetValue(m.Name, out var ok) && ok;
+            if (!success)
+            {
+                await Log(w, "WARN", $"適用失敗のため deployed へ移動しません: {m.Name}.sql{tag}");
+                continue;
+            }
+
+            var src = Path.Combine(config.MariaDbDeploySourcePath, $"{m.Name}.sql");
+            var dest = Path.Combine(config.MariaDbDeployedPath, $"{m.Name}.sql");
+            await Log(w, "DETAIL", $"→ {m.Name}.sql → MariaDB/deployed/{tag}");
+
+            if (!_dryRun) File.Move(src, dest, overwrite: true);
+        }
     }
 
     private async Task Step6_MoveToDeployed(ChannelWriter<LogEntry> w, DbConfig config, List<DeployModule> deployModules, string tag)
@@ -287,12 +416,19 @@ public class DeployService
         await File.WriteAllTextAsync(destPath, sql + "\r\nGO\r\n", sjis);
     }
 
-    private async Task RunBatAsync(ChannelWriter<LogEntry> w, string batPath, string workingDir, CancellationToken ct)
+    /// <summary>
+    /// bat を実行し、標準出力の行を（ログ転送と同時に）呼び出し元へ返す。
+    /// SQL Server 用の呼び出し（Step2/Step3/Step5）は戻り値を使わないため挙動は変わらないが、
+    /// MariaDB 用 deploy.bat（Step5）は "RESULT:OK:xxx.sql" 形式の行をここから受け取り成否判定に使う。
+    /// </summary>
+    private async Task<List<string>> RunBatAsync(ChannelWriter<LogEntry> w, string batPath, string workingDir, CancellationToken ct)
     {
+        var stdoutLines = new List<string>();
+
         if (!File.Exists(batPath))
         {
             await Log(w, "WARN", $"bat ファイルが見つかりません: {batPath}");
-            return;
+            return stdoutLines;
         }
 
         using var proc = new System.Diagnostics.Process();
@@ -311,22 +447,27 @@ public class DeployService
         };
 
         proc.Start();
-        var stdoutTask = ReadOutputAsync(proc.StandardOutput, w, "DETAIL", ct);
+        var stdoutTask = ReadOutputAsync(proc.StandardOutput, w, "DETAIL", ct, stdoutLines);
         var stderrTask = ReadOutputAsync(proc.StandardError, w, "WARN", ct);
         await Task.WhenAll(stdoutTask, stderrTask);
         await proc.WaitForExitAsync(ct);
 
         if (proc.ExitCode != 0)
             throw new Exception($"bat 終了コード: {proc.ExitCode}");
+
+        return stdoutLines;
     }
 
-    private static async Task ReadOutputAsync(StreamReader reader, ChannelWriter<LogEntry> w, string level, CancellationToken ct)
+    private static async Task ReadOutputAsync(StreamReader reader, ChannelWriter<LogEntry> w, string level, CancellationToken ct, List<string>? capture = null)
     {
         while (!reader.EndOfStream && !ct.IsCancellationRequested)
         {
             var line = await reader.ReadLineAsync(ct);
             if (!string.IsNullOrWhiteSpace(line))
+            {
+                capture?.Add(line);
                 await Log(w, level, line);
+            }
         }
     }
 

@@ -4,12 +4,19 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <!-- backend/Tests は独立したテストプロジェクト（xUnit）。既定のファイルグロブ（Compile/Content等）
+         から丸ごと除外しないと、Web SDK の静的アセット収集が Tests のビルド出力を再帰的に拾ってしまう。 -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);Tests/**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.SqlClient" Version="5.2.2" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
     <PackageReference Include="MySqlConnector" Version="2.3.7" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="MaintenanceManagement.Api.Tests" />
   </ItemGroup>
 
 </Project>

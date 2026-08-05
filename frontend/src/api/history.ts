@@ -45,7 +45,9 @@ function buildModuleSummary(details: DeploySessionDetail[]): string {
       : d.moduleType === 'Function' ? 'Func'
       : d.moduleType === 'VIEW' ? 'View'
       : d.moduleType === 'Table' ? 'Table'
-      : d.moduleType === 'MariaDB' ? 'MariaDB'
+      : d.moduleType === 'Stored' ? 'MariaDB'
+      : d.moduleType === 'MariaDbFunction' ? 'MariaDB Func'
+      : d.moduleType === 'MariaDbTable' ? 'MariaDB Table'
       : d.moduleType
     if (!typeCounts[typeKey]) typeCounts[typeKey] = { 新規: 0, 更新: 0, 削除: 0 }
     const op = d.opType as '新規' | '更新' | '削除'
