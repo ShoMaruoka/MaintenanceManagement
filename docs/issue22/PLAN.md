@@ -33,10 +33,13 @@ MariaDB のストアドプロシージャと Table を、既存の SQL Server �
 
 - [x] **Task 2: ModuleQueryService の Type 変更 + MariaDB Table クエリ追加**
   - **Description:** `QueryMariaDbAsync` が返す `Type` を `"MariaDB"` から `"Stored"` に変更する。新規に MariaDB Table 取得クエリ（`information_schema.TABLES`、`Type="MariaDbTable"`、`GitOnly=true`）を追加し、`ModuleListResponse` に `MariaDbTables` フィールドを追加する。
+  - **【ローカル手動テストで発覚し修正】既存バグ:** 当初 `QueryMariaDbAsync`/`QueryMariaDbTablesAsync` は `information_schema.ROUTINES`/`TABLES` を `config.DevDb`（SQL Server用のDB名）でスキーマ絞り込みしていたが、これは誤り。`MariaDbConnectionString` の `Database=` で接続先スキーマは既に確定しており、SQL Server と MariaDB でDB名が異なる（かつ環境ごとに可変）のは正常な前提のため、アプリ側の別設定値と突き合わせる必要はない。この不一致により、実際にはMariaDB側にモジュールが存在してもクエリが0件を返し、Git上の全ファイルが削除候補と誤判定される不具合があった（`FindDeleteCandidates` が「DBに存在しない」と誤認するため）。`ROUTINE_SCHEMA/TABLE_SCHEMA = @schema`（`DevDb`渡し）を `ROUTINE_SCHEMA/TABLE_SCHEMA = DATABASE()`（MySQL自身が接続時の既定スキーマを返す関数）に変更し、`schema`引数自体を廃止した。
+  - **【ローカル手動テストで発覚し対応】スコープ拡張:** `test/Kaios_MariaDB_rep/Stored` フォルダにはPROCEDUREだけでなくFUNCTIONも混在していることが判明（`Export.py` が両方を同じ `Stored` フォルダに出力する仕様のため）。当初 `ROUTINE_TYPE = 'PROCEDURE'` のみクエリしておりFUNCTIONが常に削除候補と誤判定される問題があった。ユーザーとの相談の結果、SQL Server同様に別タブ（`Type="MariaDbFunction"`）に分離する方針とし、`QueryMariaDbAsync`→`QueryMariaDbRoutinesAsync`（PROCEDURE/FUNCTION両方をROUTINE_TYPEで振り分けて取得）に変更。削除候補検出は同一Gitフォルダ（`Stored`）にPROCEDURE/FUNCTIONが混在するため、汎用の`FindDeleteCandidates`は使えず、ファイル内容（`CREATE DEFINER=... FUNCTION/PROCEDURE`）から種別判定する専用メソッド`FindMariaDbStoredDeleteCandidates`を新設した。`DeployService`側も`GenerateMariaDbDropSql`をType別（PROCEDURE/FUNCTION）にDROP文の動詞を切り替えるよう修正。
   - **Acceptance criteria:**
-    - [x] `QueryMariaDbAsync` が `Type="Stored"` で返す
+    - [x] `QueryMariaDbRoutinesAsync` が PROCEDURE を `Type="Stored"`、FUNCTION を `Type="MariaDbFunction"` で返す
     - [x] 新規メソッドが `TABLE_TYPE='BASE TABLE'` の一覧を `Type="MariaDbTable"`, `GitOnly=true` で返す
-    - [x] `ModuleListResponse.MariaDbTables` が追加され `GetModulesAsync` で設定される
+    - [x] `ModuleListResponse.MariaDbTables`/`MariaDbFunctions` が追加され `GetModulesAsync` で設定される
+    - [x] MariaDBの削除時、`Type="MariaDbFunction"`なら`DROP FUNCTION`、`Type="Stored"`なら`DROP PROCEDURE`が生成される
   - **Verification:**
     - [x] `dotnet build` 成功
     - [ ] ローカル MariaDB 接続時、`GET /api/modules/kaios` のレスポンスに `mariaDbTables` が含まれ、`test_dev` スキーマの実テーブル一覧と一致する（サンドボックス環境でDB接続不可のため未実施。実環境での確認が必要）
@@ -107,6 +110,8 @@ MariaDB のストアドプロシージャと Table を、既存の SQL Server �
 
 - [x] **Task 7: MariaDB 用 deploy.bat 作成 + mysql CLI 実行・ファイル単位の成否管理**
   - **Description:** MariaDBのDDL（CREATE/DROP PROCEDURE）はトランザクション非対応のため、DBレベルの自動ロールバックは行わない（SPEC.md Assumption 5 参照）。代わりに、deploy.bat は `MariaDbDeploySourcePath` 配下のSQLを1ファイルずつ mysql CLI で適用し、ファイルごとの成否を `RESULT:OK:{file}` / `RESULT:FAIL:{file}` という形式で標準出力に明示する。bat 自体は個々のファイル失敗では停止せず、常に exit code 0 で終了する（致命的なエラー、例: mysql.exe が見つからない、接続不可、等は非ゼロ終了させ全体を異常終了させる）。`DeployService` 側は `RunBatAsync` の出力行を解析して成否マップを構築できるよう、既存の `RunBatAsync` を「捕捉した標準出力行を返す」形に拡張する（既存の3呼び出し元は戻り値を無視するだけで動作は変わらない）。
+  - **【ローカル手動テストで発覚し修正】文字コード不具合:** 新規作成した `deploy.bat` が UTF-8 で保存されており実行されなかった。`DeployService.RunBatAsync` は bat 実行前に `chcp 932`（Shift-JIS）を設定するため、ファイル自体が UTF-8 のままだと日本語コメント部分がSJISとして誤読され、バッチ構文が壊れる。当初 Shift-JIS(CP932) への変換を試みたが解消せず、最終的に**コメントを全て英語(ASCII)に置き換えることで文字コード依存を完全に排除**した（BOMなし・純ASCIIを確認済み）。今後この `.bat` に日本語コメントを追加する場合は、必ずファイルを Shift-JIS(CP932) で保存すること（Windowsのメモ帳等で「ANSI」指定、または `[System.Text.Encoding]::GetEncoding(932)` で書き出す）。
+  - **【ローカル手動テストで発覚し修正】ストアド本体のコメントが消失する不具合:** 適用後、`information_schema.ROUTINES.ROUTINE_DEFINITION` を直接確認したところ、ルーチン本体内（BEGIN〜END）のコメント（`/* ... */`）が消えていた。原因は MariaDB サーバー側の仕様ではなく、**`mysql` コマンドラインクライアントがデフォルトでSQL文中のコメントをクライアント側で除去してからサーバーに送信する仕様**（`--skip-comments` が既定）だったため。ユーザーの運用共通ツールが HeidiSQL であり、コードレビュー等でコメントを確認できないと運用に支障が出るとの指摘を受け、Web検索で `mysql` クライアントの `--comments`（`-c`）オプションの存在を確認し、`deploy.bat` の mysql 呼び出しに追加した。これによりコメントがサーバーに送信・保存されるようになる（実機での再確認は未実施）。
   - **Acceptance criteria:**
     - [x] `test/SourceControl/Deploy_DEV2STG/MariaDB/ForNewCreation/deploy.bat` が新規作成され、`MariaDbDeploySourcePath` 配下のSQLを1ファイルずつ適用し `RESULT:` 行を出力する
     - [x] `RunBatAsync` が標準出力行のリストを返せるように拡張され、既存の3呼び出し元（Step2/Step3/Step5 SQLServer）の挙動が変わらない
@@ -193,6 +198,7 @@ MariaDB のストアドプロシージャと Table を、既存の SQL Server �
 - [x] **Task 12: DeployStg.tsx 表示・選択対応**
   - **Description:** `MODULE_TYPES` 配列に `'Stored'`/`'MariaDbTable'` を復活・追加し、非表示コメントを削除する。Git マージのみバッジの判定条件（`module.type === 'Table' || module.type === 'UserDefinedTableType'`）に `'MariaDbTable'` を追加する。種別タブの表示名マッピング（`'Stored'`→「MariaDB」、`'MariaDbTable'`→「MariaDB Table」）を追加する。
   - **Note:** Gitマージのみ判定は `GIT_ONLY_TYPES` 配列（`Table`/`UserDefinedTableType`/`MariaDbTable`）に切り出した。操作区分の固定は既存実装では `isDeleteCandidate` の場合のみで、Git-onlyバッジ自体は表示のみ（SQL Serverの Table/UDTT と同じ既存挙動を踏襲）。
+  - **【追加対応】ローカル手動テストでのフィードバックにより、種別タブを「SQL Server / MariaDB」のエンジンタブで分離した。** 同一ツリーにSQL ServerとMariaDBの種別が混在すると分かりにくく、そもそもMariaDBは `{selectedDb}_dev`（SQL Server用DB名）とは別DBであるため紛らわしいとの指摘を受け、`ENGINE_TYPES`（`sqlserver`: StoredProcedure/Function/VIEW/Table/UserDefinedTableType、`mariadb`: Stored/MariaDbTable）でグルーピングし、種別タブの上にエンジン切替タブを追加。ヘッダーのDBラベルもエンジンに応じて `{selectedDb}_dev` / `MariaDB` を出し分けるようにした。
   - **Acceptance criteria:**
     - [x] STG適用画面のツリーに MariaDB のストアド・Table が種別タブとして表示される（コード上・`npm run build`で型チェック通過）
     - [x] MariaDB Table 選択時は「Git マージのみ」バッジが表示される（SQL Server の Table と同じ挙動）
@@ -201,7 +207,7 @@ MariaDB のストアドプロシージャと Table を、既存の SQL Server �
     - [x] `npm run build`（tsc型チェック含む）成功
     - [ ] `npm run dev` でのブラウザ手動確認（実環境・GUI操作が必要なため未実施）
   - **Dependencies:** Task 11
-  - **Files likely touched:** `frontend/src/pages/DeployStg.tsx`
+  - **Files likely touched:** `frontend/src/pages/DeployStg.tsx`, `frontend/src/index.css`
   - **Estimated scope:** S
 
 ### Checkpoint: Phase 4 完了
@@ -250,6 +256,13 @@ MariaDB のストアドプロシージャと Table を、既存の SQL Server �
 | MariaDB 用 `deploy.bat` の運用環境への事前配置が遅れ、本番相当環境でのE2E検証ができない | Medium | Ask first 事項として早期に運用担当者と配置手順・タイミングを確認（Open Question 3） |
 | `DeployService.RunPipelineAsync` の種別分岐リファクタが大きく、既存SQL Serverフローに予期せぬ影響を与える | High | Task 4 で「SQL Serverのみのリクエストでは挙動が変わらない」ことを明示的な回帰確認項目とする |
 | `test/SourceControl/merge_MariaDB/git_merge.bat`（既存フィクスチャ）の末尾に `pause` があり、`RunBatAsync` はコンソールのないプロセス（IIS/Kestrel）から非対話的に実行する前提のため、本番用 `git_merge.bat`/MariaDB用`deploy.bat` に同様の `pause`/対話待ちコマンドが残っているとハングしうる（SQL Server用の既存 `git_merge.bat` には `pause` がなく非対話実行前提になっている点と対照的） | High | Task 5〜7 着手時、運用担当者に「本システムから実行するbatは対話待ちコマンドを含めない」ことを明示的に確認・依頼する |
+
+## ローカル手動テスト（Phase 2 E2E）で発覚し修正した既存フィクスチャの問題
+
+Issue #22 のコード自体ではなく、既存の `.bat` 資産（SQL Server と共用、今回のスコープ外だったもの）に起因する問題。実際にエンドツーエンドでパイプラインを実行して初めて顕在化した。
+
+- **`test/SourceControl/git_Live Updates.bat` のログが8進数エスケープで文字化けして見える**: 原因はGitの既定動作（`core.quotepath=true`）で、日本語ファイルパスを含む `git checkout DEV` の出力（変更ファイル一覧）がUTF-8バイト列の8進数エスケープ表示になっていたため。`git checkout DEV` → `git -c core.quotepath=false checkout DEV` に変更し解消（SJISエンコーディングは維持したまま該当箇所のみ差し替え）。
+- **`test/SourceControl/merge/git_merge.bat`（SQL Server用の既存フィクスチャ）が文字化けする**: 新規作成した MariaDB用 `deploy.bat` と同一パターンの問題で、このファイルがUTF-8で保存されており `chcp 932` 実行環境下で `echo マージ処理完了> merge_test.txt` が文字化けしていた。Shift-JIS(CP932) に変換して解消。
 
 ## Open Questions（SPEC.md から引き継ぎ・実装時に確定させる）
 

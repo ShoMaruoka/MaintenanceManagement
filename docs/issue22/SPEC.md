@@ -161,6 +161,6 @@ MariaDB版もこの構造に揃え、`config.MariaDbDeployBatPath` 等の計算�
 ## Open Questions
 
 1. MariaDB用 `deploy.bat`（mysql CLI呼び出し）は具体的にどのようなコマンド構成にするか（1ファイルずつ実行 or 全ファイル一括実行、トランザクションのラップ方法）→ Plan フェーズで詳細設計
-2. `ModuleQueryService.QueryMariaDbAsync` は現在ストアドプロシージャのみ対応。ファンクション（FUNCTION）も対象に含めるか？
+2. 【解決済み】`ModuleQueryService` はファンクション（FUNCTION）にも対応した。Git上は PROCEDURE と FUNCTION が同じ `Stored` フォルダに混在する（`Export.py` の出力仕様）ため、DBクエリでは `ROUTINE_TYPE` で判別して `Type="Stored"`（PROCEDURE）/`Type="MariaDbFunction"`（FUNCTION）に振り分け、削除候補検出はファイル内容（`CREATE DEFINER=... FUNCTION/PROCEDURE`）から種別判定する。フロントエンドは SQL Server と同様に別タブ（MariaDB エンジン内で「Stored」「Function」に分離）で表示する。
 3. MariaDB用 `deploy.bat` の実行環境への事前配置手順・タイミング（誰がいつ配置するか）
 4. MariaDB Table の手動適用待ちファイルを、SQL Server用 `deployed_manual` フォルダに混在させてよいか、それとも MariaDB 専用フォルダに分離すべきか（Assumption 14 参照）

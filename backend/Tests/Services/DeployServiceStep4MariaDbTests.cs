@@ -89,4 +89,32 @@ public class DeployServiceStep4MariaDbTests
             Directory.Delete(tempRoot, recursive: true);
         }
     }
+
+    [Fact]
+    public async Task Step4_GeneratesDropFunctionSql_ForMariaDbFunctionDelete()
+    {
+        var tempRoot = Directory.CreateTempSubdirectory("deploy-step4-maria3").FullName;
+        try
+        {
+            var config = CreateConfig(tempRoot);
+
+            var request = new DeployRequest
+            {
+                DbName = config.Name,
+                ExecutedBy = "tester",
+                Modules = [new DeployModule { Type = "MariaDbFunction", Name = "OldFunc", OpType = "削除" }],
+            };
+
+            await RunAsync(config, request);
+
+            var destPath = Path.Combine(config.MariaDbDeploySourcePath, "OldFunc.sql");
+            Assert.True(File.Exists(destPath), $"not found: {destPath}");
+            var sql = await File.ReadAllTextAsync(destPath, Encoding.UTF8);
+            Assert.Contains("DROP FUNCTION IF EXISTS `OldFunc`", sql);
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
 }

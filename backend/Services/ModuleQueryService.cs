@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using Microsoft.Data.SqlClient;
 using MySqlConnector;
 using MaintenanceManagement.Api.Models;
@@ -50,8 +51,10 @@ public class ModuleQueryService
 
         if (!string.IsNullOrEmpty(config.MariaDbConnectionString))
         {
-            response.MariaDb = await QueryMariaDbAsync(config.MariaDbConnectionString, config.DevDb);
-            response.MariaDbTables = await QueryMariaDbTablesAsync(config.MariaDbConnectionString, config.DevDb);
+            var (procedures, functions) = await QueryMariaDbRoutinesAsync(config.MariaDbConnectionString);
+            response.MariaDb = procedures;
+            response.MariaDbFunctions = functions;
+            response.MariaDbTables = await QueryMariaDbTablesAsync(config.MariaDbConnectionString);
         }
 
         response.StoredProcedures.AddRange(FindDeleteCandidates(config.GitRepoPath, "StoredProcedure", "StoredProcedure", response.StoredProcedures, gitOnly: false));
@@ -60,11 +63,78 @@ public class ModuleQueryService
         response.Tables.AddRange(FindDeleteCandidates(config.GitRepoPath, "Table", "Table", response.Tables, gitOnly: true));
         response.UserDefinedTableTypes.AddRange(FindDeleteCandidates(config.GitRepoPath, "UserDefinedTableType", "UserDefinedTableType", response.UserDefinedTableTypes, gitOnly: true));
 
-        // MariaDB: Git上のフォルダ名は "Stored"/"Table"、ファイル名にプレフィックスは付かない
-        response.MariaDb.AddRange(FindDeleteCandidates(config.MariaDbGitRepoPath, "Stored", "Stored", response.MariaDb, gitOnly: false, fileNamePrefix: ""));
+        // MariaDB: ストアドプロシージャとファンクションは Git 上で同じ "Stored" フォルダに混在するため、
+        // 汎用の FindDeleteCandidates（1フォルダ=1種別前提）は使えず、ファイル内容から種別を判定する専用ロジックを使う。
+        var (mariaDbStoredCandidates, mariaDbFunctionCandidates) = FindMariaDbStoredDeleteCandidates(
+            config.MariaDbGitRepoPath, response.MariaDb, response.MariaDbFunctions);
+        response.MariaDb.AddRange(mariaDbStoredCandidates);
+        response.MariaDbFunctions.AddRange(mariaDbFunctionCandidates);
+
         response.MariaDbTables.AddRange(FindDeleteCandidates(config.MariaDbGitRepoPath, "Table", "MariaDbTable", response.MariaDbTables, gitOnly: true, fileNamePrefix: ""));
 
         return response;
+    }
+
+    /// <summary>
+    /// MariaDB の Stored フォルダ（PROCEDURE と FUNCTION が混在）から削除候補を検出する。
+    /// フォルダを1回だけ走査し、DB未取得（存在しない＝削除候補）のファイルを
+    /// ファイル内容（<c>CREATE DEFINER=... FUNCTION/PROCEDURE</c>）から種別判定して振り分ける。
+    /// </summary>
+    private (List<ModuleInfo> Stored, List<ModuleInfo> Functions) FindMariaDbStoredDeleteCandidates(
+        string gitRepoPath, List<ModuleInfo> existingStored, List<ModuleInfo> existingFunctions)
+    {
+        var storedCandidates = new List<ModuleInfo>();
+        var functionCandidates = new List<ModuleInfo>();
+        if (string.IsNullOrEmpty(gitRepoPath)) return (storedCandidates, functionCandidates);
+
+        var dir = Path.Combine(gitRepoPath, "Stored");
+        if (!Directory.Exists(dir)) return (storedCandidates, functionCandidates);
+
+        var existingNames = new HashSet<string>(
+            existingStored.Select(m => m.Name).Concat(existingFunctions.Select(m => m.Name)),
+            StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            foreach (var file in Directory.EnumerateFiles(dir, "*.sql"))
+            {
+                var name = Path.GetFileNameWithoutExtension(file);
+                if (existingNames.Contains(name)) continue;
+
+                var isFunction = IsMariaDbFunctionFile(file);
+                var candidate = new ModuleInfo
+                {
+                    Name = name,
+                    Type = isFunction ? "MariaDbFunction" : "Stored",
+                    ModifyDate = "",
+                    GitOnly = false,
+                    IsDeleteCandidate = true,
+                };
+                (isFunction ? functionCandidates : storedCandidates).Add(candidate);
+                existingNames.Add(name);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "MariaDB Stored delete candidate detection failed");
+        }
+
+        return (storedCandidates, functionCandidates);
+    }
+
+    /// <summary>Export.py と同じ検出方法（CREATE DEFINER=... FUNCTION/PROCEDURE）でファイルの種別を判定する。</summary>
+    private static bool IsMariaDbFunctionFile(string filePath)
+    {
+        try
+        {
+            var content = File.ReadAllText(filePath);
+            var match = Regex.Match(content, @"CREATE\s+DEFINER=\S+\s+(FUNCTION|PROCEDURE)", RegexOptions.IgnoreCase);
+            return match.Success && string.Equals(match.Groups[1].Value, "FUNCTION", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     /// <summary>
@@ -148,42 +218,51 @@ public class ModuleQueryService
         return list;
     }
 
-    private async Task<List<ModuleInfo>> QueryMariaDbAsync(string connectionString, string schema)
+    /// <summary>
+    /// 対象スキーマは接続文字列（<c>MariaDbConnectionString</c> の <c>Database=</c>）で既に確定しているため、
+    /// アプリ側の設定値（DevDb 等）とは無関係に MySQL 自身の DATABASE() 関数（接続時の既定スキーマ）で絞り込む。
+    /// これにより環境（テスト/本番）ごとにDB名が異なっても接続文字列を変えるだけで正しく動作する。
+    /// PROCEDURE と FUNCTION は Git 上では同じ "Stored" フォルダに混在するが、DB上は ROUTINE_TYPE で
+    /// 区別できるため、一覧表示・削除候補判定では別種別（Stored / MariaDbFunction）として扱う。
+    /// </summary>
+    private async Task<(List<ModuleInfo> Procedures, List<ModuleInfo> Functions)> QueryMariaDbRoutinesAsync(string connectionString)
     {
-        var list = new List<ModuleInfo>();
+        var procedures = new List<ModuleInfo>();
+        var functions = new List<ModuleInfo>();
         try
         {
             await using var conn = new MySqlConnection(connectionString);
             await conn.OpenAsync();
             await using var cmd = conn.CreateCommand();
             cmd.CommandText = """
-                SELECT ROUTINE_NAME,
+                SELECT ROUTINE_NAME, ROUTINE_TYPE,
                        DATE_FORMAT(LAST_ALTERED, '%Y-%m-%d %H:%i') as modify_date
                 FROM information_schema.ROUTINES
-                WHERE ROUTINE_SCHEMA = @schema AND ROUTINE_TYPE = 'PROCEDURE'
+                WHERE ROUTINE_SCHEMA = DATABASE() AND ROUTINE_TYPE IN ('PROCEDURE', 'FUNCTION')
                 ORDER BY ROUTINE_NAME
                 """;
-            cmd.Parameters.AddWithValue("@schema", schema);
             await using var reader = await cmd.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
-                list.Add(new ModuleInfo
+                var isFunction = string.Equals(reader.GetString(1), "FUNCTION", StringComparison.OrdinalIgnoreCase);
+                var info = new ModuleInfo
                 {
                     Name = reader.GetString(0),
-                    Type = "Stored",
-                    ModifyDate = reader.IsDBNull(1) ? "" : reader.GetString(1),
+                    Type = isFunction ? "MariaDbFunction" : "Stored",
+                    ModifyDate = reader.IsDBNull(2) ? "" : reader.GetString(2),
                     GitOnly = false,
-                });
+                };
+                (isFunction ? functions : procedures).Add(info);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "MariaDB query failed schema={Schema}", schema);
+            _logger.LogError(ex, "MariaDB routines query failed");
         }
-        return list;
+        return (procedures, functions);
     }
 
-    private async Task<List<ModuleInfo>> QueryMariaDbTablesAsync(string connectionString, string schema)
+    private async Task<List<ModuleInfo>> QueryMariaDbTablesAsync(string connectionString)
     {
         var list = new List<ModuleInfo>();
         try
@@ -195,10 +274,9 @@ public class ModuleQueryService
                 SELECT TABLE_NAME,
                        DATE_FORMAT(UPDATE_TIME, '%Y-%m-%d %H:%i') as modify_date
                 FROM information_schema.TABLES
-                WHERE TABLE_SCHEMA = @schema AND TABLE_TYPE = 'BASE TABLE'
+                WHERE TABLE_SCHEMA = DATABASE() AND TABLE_TYPE = 'BASE TABLE'
                 ORDER BY TABLE_NAME
                 """;
-            cmd.Parameters.AddWithValue("@schema", schema);
             await using var reader = await cmd.ExecuteReaderAsync();
             while (await reader.ReadAsync())
             {
@@ -213,7 +291,7 @@ public class ModuleQueryService
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "MariaDB table query failed schema={Schema}", schema);
+            _logger.LogError(ex, "MariaDB table query failed");
         }
         return list;
     }

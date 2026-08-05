@@ -6,20 +6,24 @@ import SelectionSummary from '../components/SelectionSummary'
 import { getDbList, getModules } from '../api/modules'
 import type { DbListItem } from '../api/modules'
 
-const MODULE_TYPES: ModuleType[] = [
-  'StoredProcedure',
-  'Function',
-  'VIEW',
-  'Table',
-  'UserDefinedTableType',
-  'Stored',
-  'MariaDbTable',
-]
+type Engine = 'sqlserver' | 'mariadb'
+
+// SQL Server と MariaDB は別エンジン・別DBのため種別タブを分離する（DB名も異なる）
+const ENGINE_TYPES: Record<Engine, ModuleType[]> = {
+  sqlserver: ['StoredProcedure', 'Function', 'VIEW', 'Table', 'UserDefinedTableType'],
+  mariadb: ['Stored', 'MariaDbFunction', 'MariaDbTable'],
+}
+
+const ENGINE_LABELS: Record<Engine, string> = {
+  sqlserver: 'SQL Server',
+  mariadb: 'MariaDB',
+}
 
 // 種別タブの表示名（内部の ModuleType 値とは切り離す。指定のない型は値をそのまま表示）
 const MODULE_TYPE_LABELS: Partial<Record<ModuleType, string>> = {
-  Stored: 'MariaDB',
-  MariaDbTable: 'MariaDB Table',
+  Stored: 'StoredProcedure',
+  MariaDbFunction: 'Function',
+  MariaDbTable: 'Table',
 }
 
 const GIT_ONLY_TYPES: ModuleType[] = ['Table', 'UserDefinedTableType', 'MariaDbTable']
@@ -31,6 +35,7 @@ type PageState = 'select' | 'confirm' | 'log' | 'done'
 export default function DeployStg() {
   const [dbConfigs, setDbConfigs] = useState<DbListItem[]>([])
   const [selectedDb, setSelectedDb] = useState<DbName>('kaios')
+  const [activeEngine, setActiveEngine] = useState<Engine>('sqlserver')
   const [activeType, setActiveType] = useState<ModuleType>('StoredProcedure')
   const [selectedModulesByDb, setSelectedModulesByDb] = useState<Map<DbName, Map<string, OpType>>>(new Map())
   const [search, setSearch] = useState('')
@@ -122,6 +127,12 @@ export default function DeployStg() {
 
   function removeModule(db: DbName, name: string) {
     updateDbSelection(db, m => { m.delete(name); return m })
+  }
+
+  function selectEngine(engine: Engine) {
+    setActiveEngine(engine)
+    setActiveType(ENGINE_TYPES[engine][0])
+    setSearch('')
   }
 
   function moduleTypeOf(db: DbName, name: string): ModuleType {
@@ -219,7 +230,9 @@ export default function DeployStg() {
         <div className="module-tree-toolbar">
           <div className="module-tree-title">
             <span className="module-tree-title-text">モジュールツリー</span>
-            <span className="module-tree-db-label">{selectedDb}_dev</span>
+            <span className="module-tree-db-label">
+              {activeEngine === 'sqlserver' ? `${selectedDb}_dev` : 'MariaDB'}
+            </span>
           </div>
           {currentDbSelected > 0 && (
             <span className="module-tree-selected-count">{currentDbSelected} 件選択中</span>
@@ -229,8 +242,26 @@ export default function DeployStg() {
         <div className="module-tree-inner">
           {/* Category tabs */}
           <div className="module-categories">
+            <div className="module-engine-tabs">
+              {(['sqlserver', 'mariadb'] as Engine[]).map(engine => {
+                const engineSelCount = ENGINE_TYPES[engine].reduce(
+                  (sum, t) => sum + (modulesByDb[selectedDb]?.[t] ?? []).filter(m => selectedModules.has(m.name)).length,
+                  0,
+                )
+                return (
+                  <div
+                    key={engine}
+                    className={`module-engine-tab${activeEngine === engine ? ' active' : ''}`}
+                    onClick={() => selectEngine(engine)}
+                  >
+                    {ENGINE_LABELS[engine]}
+                    {engineSelCount > 0 && <span className="module-engine-tab-count">{engineSelCount}</span>}
+                  </div>
+                )
+              })}
+            </div>
             <div className="module-cat-label">種別</div>
-            {MODULE_TYPES.map((type) => {
+            {ENGINE_TYPES[activeEngine].map((type) => {
               const modules = modulesByDb[selectedDb]?.[type] ?? []
               const selCount = modules.filter(m => selectedModules.has(m.name)).length
               return (

@@ -24,6 +24,7 @@ export interface ApiModuleResponse {
   tables: ApiModuleInfo[]
   userDefinedTableTypes: ApiModuleInfo[]
   mariaDb: ApiModuleInfo[]
+  mariaDbFunctions: ApiModuleInfo[]
   mariaDbTables: ApiModuleInfo[]
 }
 
@@ -41,6 +42,7 @@ export async function getModules(dbName: DbName): Promise<Record<ModuleType, Mod
     Table: formatModules(response.tables),
     UserDefinedTableType: formatModules(response.userDefinedTableTypes),
     Stored: formatModules(response.mariaDb),
+    MariaDbFunction: formatModules(response.mariaDbFunctions),
     MariaDbTable: formatModules(response.mariaDbTables),
   }
 }

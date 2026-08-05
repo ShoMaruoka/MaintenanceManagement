@@ -18,5 +18,6 @@ public class ModuleListResponse
     public List<ModuleInfo> Tables { get; set; } = [];
     public List<ModuleInfo> UserDefinedTableTypes { get; set; } = [];
     public List<ModuleInfo> MariaDb { get; set; } = [];
+    public List<ModuleInfo> MariaDbFunctions { get; set; } = [];
     public List<ModuleInfo> MariaDbTables { get; set; } = [];
 }

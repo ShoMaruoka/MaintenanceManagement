@@ -14,9 +14,9 @@ public class DeployService
     private static readonly HashSet<string> GitOnlyTypes =
         new(ManualApplyService.ManualApplyTypes, StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>MariaDB 系のモジュール種別（ストアド・Table）。Step1 の出力先振り分けに使用する。</summary>
+    /// <summary>MariaDB 系のモジュール種別（ストアド・ファンクション・Table）。Step1 の出力先振り分けに使用する。</summary>
     private static readonly HashSet<string> MariaDbTypes =
-        new(["Stored", "MariaDbTable"], StringComparer.OrdinalIgnoreCase);
+        new(["Stored", "MariaDbFunction", "MariaDbTable"], StringComparer.OrdinalIgnoreCase);
 
     // DB ごとの実行中フラグ（重複リクエスト防止）
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> _dbLocks = new();
@@ -269,7 +269,8 @@ public class DeployService
 
     private static async Task GenerateMariaDbDropSql(DeployModule m, string destPath)
     {
-        var sql = $"DROP PROCEDURE IF EXISTS `{m.Name}`;";
+        var verb = string.Equals(m.Type, "MariaDbFunction", StringComparison.OrdinalIgnoreCase) ? "FUNCTION" : "PROCEDURE";
+        var sql = $"DROP {verb} IF EXISTS `{m.Name}`;";
         Directory.CreateDirectory(Path.GetDirectoryName(destPath)!);
         await File.WriteAllTextAsync(destPath, sql + "\r\n", Encoding.UTF8);
     }
