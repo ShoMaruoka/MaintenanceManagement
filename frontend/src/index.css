@@ -452,7 +452,7 @@ input {
 
 /* ---- DB Selector ---- */
 .db-selector {
-  width: 228px;
+  width: 320px;
   flex: none;
   background: #fff;
   border-right: 1px solid #e4e6ea;
