@@ -1,5 +1,5 @@
 import { fetchJson } from './client'
-import type { DeploySession, DeploySessionDetail } from '../types'
+import type { DashboardStats, DeploySession, DeploySessionDetail } from '../types'
 
 interface ApiDeploySession {
   sessionId: number
@@ -20,6 +20,21 @@ export async function getSessions(limit: number = 50): Promise<DeploySession[]> 
 export async function getSession(sessionId: number): Promise<DeploySession> {
   const session = await fetchJson<ApiDeploySession>(`/history/sessions/${sessionId}`)
   return formatSession(session)
+}
+
+export async function getDashboardStats(days: number = 30): Promise<DashboardStats> {
+  return fetchJson<DashboardStats>(`/history/stats?days=${days}`)
+}
+
+/** ISO 8601 (UTC) を「MM/DD HH:mm」（ローカル時刻）に整形する。 */
+export function formatDateTime(isoStr: string): string {
+  const d = new Date(isoStr)
+  if (isNaN(d.getTime())) return isoStr
+  const mm = String(d.getMonth() + 1).padStart(2, '0')
+  const dd = String(d.getDate()).padStart(2, '0')
+  const hh = String(d.getHours()).padStart(2, '0')
+  const mi = String(d.getMinutes()).padStart(2, '0')
+  return `${mm}/${dd} ${hh}:${mi}`
 }
 
 function formatExecutedAt(isoStr: string): string {

@@ -400,6 +400,81 @@ public class DatabaseService
         return logs;
     }
 
+    /// <summary>
+    /// ダッシュボードのサマリーカード用の集計を 1 コネクションでまとめて取得する。
+    /// ExecutedAt は ISO 8601 (UTC) 文字列なので、辞書順比較で期間絞り込みができる。
+    /// </summary>
+    public DashboardStats GetDashboardStats(int days = 30)
+    {
+        using var conn = OpenConnection();
+        var stats = new DashboardStats { Days = days };
+        var cutoff = DateTime.UtcNow.AddDays(-days).ToString("o");
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                SELECT COUNT(*), SUM(CASE WHEN Status = 'success' THEN 1 ELSE 0 END)
+                FROM DeploySession
+                WHERE ExecutedAt >= $cutoff AND Status IN ('success', 'failed');
+                """;
+            cmd.Parameters.AddWithValue("$cutoff", cutoff);
+            using var reader = cmd.ExecuteReader();
+            if (reader.Read())
+            {
+                stats.TotalSessions   = (int)reader.GetInt64(0);
+                stats.SuccessSessions = reader.IsDBNull(1) ? 0 : (int)reader.GetInt64(1);
+            }
+        }
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                SELECT COUNT(*) FROM DeploySession WHERE Status = 'running';
+                """;
+            stats.RunningCount = (int)(long)(cmd.ExecuteScalar() ?? 0L);
+        }
+
+        if (stats.RunningCount > 0)
+        {
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = """
+                SELECT DbName, ExecutedBy FROM DeploySession
+                WHERE Status = 'running' ORDER BY SessionId DESC LIMIT 1;
+                """;
+            using var reader = cmd.ExecuteReader();
+            if (reader.Read())
+            {
+                stats.RunningDbName     = reader.GetString(0);
+                stats.RunningExecutedBy = reader.GetString(1);
+            }
+        }
+
+        using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = """
+                SELECT LogId, ExecutedBy, ExecutedAt, AppliedFiles, HeldFiles, Result, ManualFiles
+                FROM ProductionReadyLog ORDER BY LogId DESC LIMIT 1;
+                """;
+            using var reader = cmd.ExecuteReader();
+            if (reader.Read())
+            {
+                // LogDetail はサマリー表示に不要なため取得しない（ログ本文が大きくなりうる）。
+                stats.LastPrepare = new ProductionReadyLog
+                {
+                    LogId        = reader.GetInt64(0),
+                    ExecutedBy   = reader.GetString(1),
+                    ExecutedAt   = reader.GetString(2),
+                    AppliedFiles = reader.GetInt32(3),
+                    HeldFiles    = reader.GetInt32(4),
+                    Result       = reader.GetString(5),
+                    ManualFiles  = reader.IsDBNull(6) ? 0 : reader.GetInt32(6),
+                };
+            }
+        }
+
+        return stats;
+    }
+
     private SqliteConnection OpenConnection()
     {
         var conn = new SqliteConnection(_connectionString);

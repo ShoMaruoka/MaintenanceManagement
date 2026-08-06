@@ -75,3 +75,24 @@ export interface ProductionFile {
 }
 
 export type MultiDbModules = { db: DbName; modules: SelectedModule[] }[]
+
+export interface ProductionReadyLog {
+  logId: number
+  executedBy: string
+  executedAt: string
+  appliedFiles: number
+  heldFiles: number
+  manualFiles: number
+  result: string
+}
+
+/** ダッシュボード上部のサマリーカード用の集計値（GET /api/history/stats）。 */
+export interface DashboardStats {
+  lastPrepare: ProductionReadyLog | null
+  days: number
+  totalSessions: number
+  successSessions: number
+  runningCount: number
+  runningDbName: string | null
+  runningExecutedBy: string | null
+}

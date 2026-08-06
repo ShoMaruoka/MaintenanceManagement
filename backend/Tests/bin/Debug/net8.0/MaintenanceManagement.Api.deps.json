@@ -6,7 +6,7 @@
   "compilationOptions": {},
   "targets": {
     ".NETCoreApp,Version=v8.0": {
-      "MaintenanceManagement.Api/1.0.0": {
+      "MaintenanceManagement.Api/1.2.0": {
         "dependencies": {
           "Microsoft.Data.SqlClient": "5.2.2",
           "Microsoft.Data.Sqlite": "8.0.11",
@@ -523,7 +523,7 @@
     }
   },
   "libraries": {
-    "MaintenanceManagement.Api/1.0.0": {
+    "MaintenanceManagement.Api/1.2.0": {
       "type": "project",
       "serviceable": false,
       "sha512": ""

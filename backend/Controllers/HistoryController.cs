@@ -33,6 +33,13 @@ public class HistoryController : ControllerBase
         return Ok(session);
     }
 
+    [HttpGet("stats")]
+    public IActionResult GetStats([FromQuery] int days = 30)
+    {
+        days = Math.Clamp(days, 1, 365);
+        return Ok(_db.GetDashboardStats(days));
+    }
+
     [HttpGet("prepare")]
     public IActionResult GetPrepareLogs([FromQuery] int limit = 20)
     {

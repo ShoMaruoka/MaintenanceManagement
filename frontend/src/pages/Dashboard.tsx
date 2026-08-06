@@ -2,11 +2,22 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import StatusBadge from '../components/StatusBadge'
 import { SessionDetailTable } from '../components/SessionDetailTable'
-import { getSessions } from '../api/history'
-import type { DeploySession } from '../types'
+import { formatDateTime, getDashboardStats, getSessions } from '../api/history'
+import type { DashboardStats, DeploySession } from '../types'
+
+const MONO = "'JetBrains Mono', monospace"
+
+/** 本番前準備の実行内容を「適用12 · 保留3 · 手動2」形式にまとめる。 */
+function formatPrepareSummary(log: NonNullable<DashboardStats['lastPrepare']>): string {
+  const parts = [`適用${log.appliedFiles}`]
+  if (log.heldFiles > 0) parts.push(`保留${log.heldFiles}`)
+  if (log.manualFiles > 0) parts.push(`手動${log.manualFiles}`)
+  return parts.join(' · ')
+}
 
 export default function Dashboard() {
   const [sessions, setSessions] = useState<DeploySession[]>([])
+  const [stats, setStats] = useState<DashboardStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string>('')
   const [expandedId, setExpandedId] = useState<number | null>(null)
@@ -16,9 +27,18 @@ export default function Dashboard() {
       .then(setSessions)
       .catch(err => setError((err as Error).message))
       .finally(() => setLoading(false))
+
+    // サマリーカードは履歴テーブルとは独立に描画するため、失敗しても表全体は壊さない。
+    getDashboardStats(30)
+      .then(setStats)
+      .catch(() => setStats(null))
   }, [])
 
-  const runningCount = sessions.filter(s => s.status === 'running').length
+  const lastPrepare = stats?.lastPrepare ?? null
+  const successRate = stats && stats.totalSessions > 0
+    ? (stats.successSessions / stats.totalSessions) * 100
+    : null
+  const runningCount = stats?.runningCount ?? 0
 
   const handleExpandRow = (sessionId: number) => {
     setExpandedId(prev => prev === sessionId ? null : sessionId)
@@ -29,28 +49,44 @@ export default function Dashboard() {
       <div className="stat-cards">
         <div className="stat-card">
           <div className="stat-card-label">本番前準備 最終実行</div>
-          <div className="stat-card-value">06/12 03:00</div>
+          <div className="stat-card-value">
+            {lastPrepare ? formatDateTime(lastPrepare.executedAt) : '—'}
+          </div>
           <div className="stat-card-sub">
-            <span className="badge badge-success">成功 · 全4DB</span>
+            {lastPrepare ? (
+              <span className={lastPrepare.result === 'success' ? 'badge badge-success' : 'badge badge-failed'}>
+                {lastPrepare.result === 'success' ? '成功' : '失敗'} · {formatPrepareSummary(lastPrepare)}
+              </span>
+            ) : (
+              <span style={{ color: '#8a9099' }}>実行履歴なし</span>
+            )}
           </div>
         </div>
         <div className="stat-card">
-          <div className="stat-card-label">直近30日 成功率</div>
+          <div className="stat-card-label">直近{stats?.days ?? 30}日 成功率</div>
           <div className="stat-card-value">
-            96.6<span style={{ fontSize: 13, color: '#8a9099' }}>%</span>
+            {successRate === null ? '—' : (
+              <>
+                {successRate.toFixed(1)}<span style={{ fontSize: 13, color: '#8a9099' }}>%</span>
+              </>
+            )}
           </div>
-          <div className="stat-card-sub" style={{ color: '#8a9099', fontFamily: "'JetBrains Mono', monospace" }}>
-            28 / 29 セッション成功
+          <div className="stat-card-sub" style={{ color: '#8a9099', fontFamily: MONO }}>
+            {stats && stats.totalSessions > 0
+              ? `${stats.successSessions} / ${stats.totalSessions} セッション成功`
+              : '対象セッションなし'}
           </div>
         </div>
         <div className="stat-card">
           <div className="stat-card-label">実行中セッション</div>
           <div className="stat-card-value" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span className="running-pulse" />
+            {runningCount > 0 && <span className="running-pulse" />}
             {runningCount}
           </div>
-          <div className="stat-card-sub" style={{ color: '#b25e09', fontFamily: "'JetBrains Mono', monospace" }}>
-            {runningCount > 0 ? 'kaios — STG 適用中…' : 'なし'}
+          <div className="stat-card-sub" style={{ color: runningCount > 0 ? '#b25e09' : '#8a9099', fontFamily: MONO }}>
+            {runningCount > 0
+              ? `${stats?.runningDbName ?? '-'} — 適用中…${runningCount > 1 ? ` (他${runningCount - 1}件)` : ''}`
+              : 'なし'}
           </div>
         </div>
       </div>
