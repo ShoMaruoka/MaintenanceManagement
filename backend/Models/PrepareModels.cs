@@ -7,6 +7,12 @@ public class PrepareFileInfo
     public string FileName { get; set; } = "";
     public string Source { get; set; } = "";  // "deployed" | "hold"
     public string DbType { get; set; } = "";  // "sqlserver" | "mariadb"
+
+    /// <summary>
+    /// STG 適用時の操作区分。実行履歴（DeploySessionDetail）から逆引きする。
+    /// 引き当てられない場合は "不明"。新規 | 更新 | 削除 | 不明
+    /// </summary>
+    public string OpType { get; set; } = "";
 }
 
 /// <summary>

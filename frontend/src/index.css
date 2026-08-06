@@ -1481,6 +1481,41 @@ input {
   flex-shrink: 0;
 }
 
+/* 操作区分バッジ。配色は既存の op-badge（実行履歴・確認ダイアログ）と揃える。 */
+.prep-optype-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 3px;
+  letter-spacing: .04em;
+  flex-shrink: 0;
+}
+
+.prep-optype-new     { color: #137a4c; background: #e6f4ec; }
+.prep-optype-update  { color: #1f5fd0; background: #e7f0fd; }
+.prep-optype-delete  { color: #c5283d; background: #fcebed; }
+.prep-optype-unknown { color: #8a9099; background: #f0f2f5; }
+
+/* 削除区分は本番で DROP が走るため、行全体を赤系にして見落としを防ぐ。 */
+.prep-file-item-delete {
+  background: #fdf6f7;
+}
+.prep-file-item-delete:hover { background: #fbebee; }
+.prep-file-item-delete.selected {
+  background: #fbe9ec;
+  box-shadow: inset 2px 0 0 #c5283d;
+}
+
+.prep-section-delete-count {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: #c5283d;
+  background: #fcebed;
+  padding: 1px 6px;
+  border-radius: 3px;
+  margin-left: 6px;
+}
+
 .prep-manual-meta {
   font-size: 9.5px;
   color: #9aa0a8;
@@ -1700,15 +1735,14 @@ input {
   color: #d8dbe0;
 }
 
-.prep-compare-mark {
-  color: #22a06b;
+/* 比較セルの操作区分チップ。色は prep-optype-* が供給し、ここはレイアウトのみ。 */
+.prep-compare-op {
+  display: inline-block;
   font-weight: 700;
-}
-
-.prep-compare-mark-pending {
-  color: #1a5fc8;
-  font-weight: 700;
-  font-size: 10.5px;
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  white-space: nowrap;
 }
 
 .prep-compare-row-unique {

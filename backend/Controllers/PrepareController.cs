@@ -46,10 +46,13 @@ public class PrepareController : ControllerBase
         {
             var entry = new PrepareDbEntry { DbName = config.Name };
 
-            entry.Files.AddRange(ReadFiles(config.DeployedPath, "deployed", "sqlserver"));
-            entry.Files.AddRange(ReadFiles(config.DeployedHoldPath, "hold", "sqlserver"));
-            entry.Files.AddRange(ReadFiles(config.MariaDbDeployedPath, "deployed", "mariadb"));
-            entry.Files.AddRange(ReadFiles(config.MariaDbDeployedHoldPath, "hold", "mariadb"));
+            // 操作区分は DB 単位で 1 回だけ引き、ファイルごとには辞書引きで解決する。
+            var opTypes = _db.GetLatestOpTypes(config.Name);
+
+            entry.Files.AddRange(ReadFiles(config.DeployedPath, "deployed", "sqlserver", opTypes));
+            entry.Files.AddRange(ReadFiles(config.DeployedHoldPath, "hold", "sqlserver", opTypes));
+            entry.Files.AddRange(ReadFiles(config.MariaDbDeployedPath, "deployed", "mariadb", opTypes));
+            entry.Files.AddRange(ReadFiles(config.MariaDbDeployedHoldPath, "hold", "mariadb", opTypes));
             entry.ImageFiles.AddRange(_imagePrepare.ListRelativeFilePaths(config));
             entry.ManualItems.AddRange(_manualApply.List(config));
 
@@ -106,15 +109,23 @@ public class PrepareController : ControllerBase
         }
     }
 
-    private static List<PrepareFileInfo> ReadFiles(string dir, string source, string dbType)
+    private static List<PrepareFileInfo> ReadFiles(
+        string dir, string source, string dbType, IReadOnlyDictionary<string, string> opTypes)
     {
         if (!Directory.Exists(dir)) return [];
         return Directory.GetFiles(dir, "*.sql")
-            .Select(f => new PrepareFileInfo
+            .Select(f =>
             {
-                FileName = Path.GetFileName(f),
-                Source = source,
-                DbType = dbType,
+                var fileName = Path.GetFileName(f);
+                return new PrepareFileInfo
+                {
+                    FileName = fileName,
+                    Source = source,
+                    DbType = dbType,
+                    OpType = opTypes.TryGetValue(OpTypeResolver.FileKey(dbType, fileName), out var opType)
+                        ? opType
+                        : OpTypeResolver.Unknown,
+                };
             })
             .ToList();
     }

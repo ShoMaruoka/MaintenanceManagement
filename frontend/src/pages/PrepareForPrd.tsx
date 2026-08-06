@@ -10,6 +10,7 @@ import {
 } from '../api/prepare'
 import { useUser } from '../context/UserContext'
 import PrepareCompareView from '../components/PrepareCompareView'
+import { isDeleteOp, opTypeClass } from '../lib/opType'
 
 type PageState = 'select' | 'confirm' | 'running' | 'done'
 type ViewMode = 'cards' | 'compare'
@@ -20,6 +21,8 @@ interface PrepareFile {
   fileName: string
   source: 'deployed' | 'hold'
   dbType: 'sqlserver' | 'mariadb'
+  /** STG 適用時の操作区分（新規 / 更新 / 削除 / 不明） */
+  opType: string
 }
 
 interface DbEntry {
@@ -85,6 +88,7 @@ export default function PrepareForPrd() {
             fileName: f.fileName,
             source: f.source,
             dbType: f.dbType,
+            opType: f.opType,
           }))
           dbMap[entry.dbName].imageFiles = entry.imageFiles ?? []
           dbMap[entry.dbName].manualItems = entry.manualItems ?? []
@@ -174,15 +178,20 @@ export default function PrepareForPrd() {
     totalImageChecked,
     totalManualChecked,
     totalManualPending,
+    totalDeleteChecked,
     totalChecked,
   } = useMemo(() => {
     let sql = 0
     let images = 0
     let manual = 0
     let manualPending = 0
+    let deletes = 0
     dbEntries.forEach(db => {
       db.files.forEach(f => {
-        if (checked.has(fileKey(db.dbName, f))) sql++
+        if (checked.has(fileKey(db.dbName, f))) {
+          sql++
+          if (isDeleteOp(f.opType)) deletes++
+        }
       })
       db.imageFiles.forEach(path => {
         if (checked.has(imageKey(db.dbName, path))) images++
@@ -197,6 +206,7 @@ export default function PrepareForPrd() {
       totalImageChecked: images,
       totalManualChecked: manual,
       totalManualPending: manualPending,
+      totalDeleteChecked: deletes,
       totalChecked: sql + images + manual,
     }
   }, [checked, dbEntries])
@@ -348,6 +358,7 @@ export default function PrepareForPrd() {
           const holdCheckedCount     = holdFiles.filter(f => checked.has(fileKey(db.dbName, f))).length
           const imageCheckedCount    = db.imageFiles.filter(p => checked.has(imageKey(db.dbName, p))).length
           const manualCheckedCount   = db.manualItems.filter(i => checked.has(manualKey(db.dbName, i))).length
+          const deployedDeleteCount  = deployedFiles.filter(f => isDeleteOp(f.opType)).length
           const allDeployedChecked   = deployedFiles.length > 0 && deployedCheckedCount === deployedFiles.length
           const allHoldChecked       = holdFiles.length > 0 && holdCheckedCount === holdFiles.length
           const allImagesChecked     = db.imageFiles.length > 0 && imageCheckedCount === db.imageFiles.length
@@ -428,6 +439,9 @@ export default function PrepareForPrd() {
                     style={db.manualItems.length > 0 ? { marginTop: 10 } : undefined}
                   >
                     <span className="prep-section-label prep-section-label-apply">今回適用する（SQL）</span>
+                    {deployedDeleteCount > 0 && (
+                      <span className="prep-section-delete-count">うち削除 {deployedDeleteCount} 件</span>
+                    )}
                     {deployedFiles.length > 1 && (
                       <button
                         className="prep-toggle-all-btn"
@@ -446,7 +460,7 @@ export default function PrepareForPrd() {
                       return (
                         <div
                           key={k}
-                          className={`prep-file-item prep-file-item-selectable${isChecked ? ' selected' : ''}`}
+                          className={`prep-file-item prep-file-item-selectable${isDeleteOp(f.opType) ? ' prep-file-item-delete' : ''}${isChecked ? ' selected' : ''}`}
                           onClick={() => toggle(k)}
                         >
                           <span className={`checkbox${isChecked ? ' checked' : ''}`} style={{ width: 13, height: 13, minWidth: 13, borderRadius: 3 }}>
@@ -457,6 +471,7 @@ export default function PrepareForPrd() {
                             )}
                           </span>
                           <span className="prep-file-name">{f.fileName}</span>
+                          <span className={`prep-optype-badge ${opTypeClass(f.opType)}`}>{f.opType}</span>
                           <span className="prep-file-db-badge">{f.dbType === 'mariadb' ? 'MariaDB' : 'SS'}</span>
                         </div>
                       )
@@ -483,7 +498,7 @@ export default function PrepareForPrd() {
                         return (
                           <div
                             key={k}
-                            className={`prep-file-item prep-file-item-selectable prep-file-item-hold${isChecked ? ' selected' : ''}`}
+                            className={`prep-file-item prep-file-item-selectable prep-file-item-hold${isDeleteOp(f.opType) ? ' prep-file-item-delete' : ''}${isChecked ? ' selected' : ''}`}
                             onClick={() => toggle(k)}
                           >
                             <span className={`checkbox${isChecked ? ' checked' : ''}`} style={{ width: 13, height: 13, minWidth: 13, borderRadius: 3 }}>
@@ -494,6 +509,7 @@ export default function PrepareForPrd() {
                               )}
                             </span>
                             <span className="prep-file-name">{f.fileName}</span>
+                            <span className={`prep-optype-badge ${opTypeClass(f.opType)}`}>{f.opType}</span>
                             <span className="prep-file-db-badge">{f.dbType === 'mariadb' ? 'MariaDB' : 'SS'}</span>
                           </div>
                         )
@@ -587,6 +603,14 @@ export default function PrepareForPrd() {
           <span>
             選択した SQL {totalSqlChecked} 件・画像 {totalImageChecked} 件・手動適用 {totalManualChecked} 件（合計 {totalChecked}）を本番フォルダへコピー／移動します。
             未選択の deployed/ SQL は deployed_hold/ へ移動されます。
+            {totalDeleteChecked > 0 && (
+              <>
+                {' '}
+                <strong style={{ color: '#c5283d' }}>
+                  うち {totalDeleteChecked} 件は削除（DROP）です。本番からオブジェクトが削除されます。
+                </strong>
+              </>
+            )}
             {totalManualPending > 0 && (
               <>
                 {' '}

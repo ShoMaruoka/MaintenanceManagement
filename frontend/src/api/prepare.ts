@@ -5,6 +5,8 @@ export interface ApiPrepareFileInfo {
   fileName: string
   source: 'deployed' | 'hold'
   dbType: 'sqlserver' | 'mariadb'
+  /** STG 適用時の操作区分。実行履歴から逆引きできない場合は '不明' */
+  opType: string
 }
 
 /** 自動デプロイしない Table / UserDefinedTableType の手動適用待ち項目 */

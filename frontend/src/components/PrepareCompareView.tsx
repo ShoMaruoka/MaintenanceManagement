@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { DbName } from '../types'
 import { buildCompareSections, toTsv, type PrepareCompareDbEntry } from '../lib/prepareCompare'
+import { opTypeClass, opTypeShortLabel } from '../lib/opType'
 
 interface PrepareCompareViewProps {
   dbEntries: PrepareCompareDbEntry[]
@@ -50,7 +51,14 @@ export default function PrepareCompareView({ dbEntries, checked, dbOrder }: Prep
             一部DBのみに存在
           </span>
           <span className="prep-compare-legend-item">
-            <span className="prep-compare-mark-pending">○(適用予定)</span>
+            <span className="prep-compare-op prep-optype-new">新</span>
+            <span className="prep-compare-op prep-optype-update">更</span>
+            <span className="prep-compare-op prep-optype-delete">削</span>
+            <span className="prep-compare-op prep-optype-unknown">?</span>
+            操作区分（新規／更新／削除／不明）
+          </span>
+          <span className="prep-compare-legend-item">
+            <span className="prep-compare-op prep-optype-update">更(適用予定)</span>
             保留中だが今回適用予定
           </span>
         </div>
@@ -100,10 +108,14 @@ export default function PrepareCompareView({ dbEntries, checked, dbOrder }: Prep
                           return <td key={db} className="prep-compare-cell prep-compare-cell-empty" />
                         }
                         const isPending = section.source === 'hold' && cell.checked
+                        const label = opTypeShortLabel(cell.opType)
                         return (
                           <td key={db} className="prep-compare-cell">
-                            <span className={isPending ? 'prep-compare-mark-pending' : 'prep-compare-mark'}>
-                              {isPending ? '○(適用予定)' : '○'}
+                            <span
+                              className={`prep-compare-op ${opTypeClass(cell.opType)}`}
+                              title={cell.opType}
+                            >
+                              {isPending ? `${label}(適用予定)` : label}
                             </span>
                           </td>
                         )

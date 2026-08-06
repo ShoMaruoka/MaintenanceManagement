@@ -1,9 +1,11 @@
 import type { DbName } from '../types'
+import { opTypeShortLabel } from './opType'
 
 export interface PrepareCompareFile {
   fileName: string
   source: 'deployed' | 'hold'
   dbType: 'sqlserver' | 'mariadb'
+  opType: string
 }
 
 export interface PrepareCompareDbEntry {
@@ -14,6 +16,8 @@ export interface PrepareCompareDbEntry {
 export interface CompareCell {
   exists: boolean
   checked: boolean
+  /** 操作区分は DB ごとに異なりうるため、行ではなくセル単位で保持する。 */
+  opType: string
 }
 
 export interface CompareRow {
@@ -59,6 +63,7 @@ function buildSection(
         row.cells[db.dbName] = {
           exists: true,
           checked: checked.has(fileKey(db.dbName, f)),
+          opType: f.opType,
         }
       })
   })
@@ -98,8 +103,9 @@ export function toTsv(sections: CompareSection[], dbOrder: DbName[]): string {
         const cells = dbOrder.map(db => {
           const cell = row.cells[db]
           if (!cell?.exists) return ''
-          if (section.source === 'hold') return cell.checked ? '○(適用予定)' : '○'
-          return '○'
+          const label = opTypeShortLabel(cell.opType)
+          if (section.source === 'hold' && cell.checked) return `${label}(適用予定)`
+          return label
         })
         lines.push([row.fileName, ...cells].join('\t'))
       })

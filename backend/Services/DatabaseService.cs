@@ -65,6 +65,8 @@ public class DatabaseService
             );
             CREATE INDEX IF NOT EXISTS IX_WebSourceDeployLog_DbName_ExecutedAt
                 ON WebSourceDeployLog (DbName, ExecutedAt DESC);
+            CREATE INDEX IF NOT EXISTS IX_DeploySessionDetail_SessionId
+                ON DeploySessionDetail (SessionId);
             """;
         cmd.ExecuteNonQuery();
 
@@ -185,6 +187,41 @@ public class DatabaseService
         cmd.Parameters.AddWithValue("$moduleName", moduleName);
         cmd.Parameters.AddWithValue("$result", result);
         cmd.ExecuteNonQuery();
+    }
+
+    /// <summary>
+    /// 指定 DB の「逆引きキー → 最新の操作区分（新規／更新／削除）」の辞書を返す。
+    /// 本番前準備画面で deployed/ の SQL ファイルに区分を表示するために使う。
+    ///
+    /// deployed/ にファイルがある＝適用が成功している（Step6 は成功時のみ移動する）ため、
+    /// セッション・明細の成否では絞らない。MariaDB は明細にセッション全体の成否が
+    /// 書かれるため、絞ると正しい区分が引けなくなる。
+    ///
+    /// 重複排除の粒度は ModuleType 単位ではなく「DB 種別＋モジュール名」単位。
+    /// 分類ルールを SQL と C# に二重定義しないよう、SQL は素直に古い順で返し、
+    /// C# 側で OpTypeResolver を通しながら後勝ちで畳み込む。
+    /// </summary>
+    public Dictionary<string, string> GetLatestOpTypes(string dbName)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT d.ModuleType, d.ModuleName, d.OpType
+            FROM DeploySessionDetail d
+            JOIN DeploySession s ON s.SessionId = d.SessionId
+            WHERE s.DbName = $dbName
+            ORDER BY d.DetailId ASC;
+            """;
+        cmd.Parameters.AddWithValue("$dbName", dbName);
+
+        var map = new Dictionary<string, string>(OpTypeResolver.KeyComparer);
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            var key = OpTypeResolver.ModuleKey(reader.GetString(0), reader.GetString(1));
+            map[key] = OpTypeResolver.NormalizeOpType(reader.GetString(2));
+        }
+        return map;
     }
 
     public long InsertProductionReadyLog(
