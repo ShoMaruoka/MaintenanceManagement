@@ -1503,7 +1503,6 @@ input {
 .prep-file-item-delete:hover { background: #fbebee; }
 .prep-file-item-delete.selected {
   background: #fbe9ec;
-  box-shadow: inset 2px 0 0 #c5283d;
 }
 
 .prep-section-delete-count {
