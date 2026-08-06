@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useUser } from '../context/UserContext'
+import { getApiVersion } from '../api/version'
 
 const NAV_ITEMS = [
   {
@@ -82,9 +84,42 @@ const ADMIN_ITEMS = [
   },
 ]
 
+type ApiVersionState =
+  | { status: 'loading' }
+  | { status: 'ok'; version: string }
+  | { status: 'error' }
+
 export default function Sidebar() {
   const { currentUser, currentRole, clearUser } = useUser()
   const navigate = useNavigate()
+  const [apiVersion, setApiVersion] = useState<ApiVersionState>({ status: 'loading' })
+
+  useEffect(() => {
+    let cancelled = false
+    getApiVersion()
+      .then((info) => {
+        if (!cancelled) setApiVersion({ status: 'ok', version: info.version })
+      })
+      .catch(() => {
+        if (!cancelled) setApiVersion({ status: 'error' })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // フロントとバックエンドが別々に配信されるため、片方だけ古い状態が起こり得る。
+  // 一致していれば控えめに、食い違ったら警告色で明示する。
+  const versionTitle =
+    apiVersion.status === 'error'
+      ? `画面: v${__APP_VERSION__} / API: バージョンを取得できませんでした`
+      : apiVersion.status === 'ok' && apiVersion.version !== __APP_VERSION__
+        ? `バージョン不一致 — 画面: v${__APP_VERSION__} / API: v${apiVersion.version}`
+        : `画面・API ともに v${__APP_VERSION__}`
+
+  const needsAttention =
+    apiVersion.status === 'error' ||
+    (apiVersion.status === 'ok' && apiVersion.version !== __APP_VERSION__)
 
   const handleSwitch = () => {
     clearUser()
@@ -99,6 +134,13 @@ export default function Sidebar() {
         <div className="sidebar-logo-icon">M</div>
         <div className="sidebar-logo-text">
           Maintenance<span> Mgr</span>
+          <div
+            className={`sidebar-version${needsAttention ? ' warn' : ''}`}
+            title={versionTitle}
+          >
+            v{__APP_VERSION__}
+            {needsAttention ? ' ⚠' : ''}
+          </div>
         </div>
       </div>
 

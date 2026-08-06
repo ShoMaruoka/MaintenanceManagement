@@ -95,6 +95,21 @@ input {
   font-weight: 500;
 }
 
+.sidebar-version {
+  margin-top: 1px;
+  font-size: 10px;
+  font-weight: 500;
+  color: #7b8494;
+  font-family: 'JetBrains Mono', monospace;
+  letter-spacing: 0.02em;
+  cursor: default;
+}
+
+/* 画面と API の版が食い違ったとき、または API から版を取得できなかったとき */
+.sidebar-version.warn {
+  color: #f0806a;
+}
+
 .sidebar-nav {
   padding: 12px 10px;
   display: flex;
