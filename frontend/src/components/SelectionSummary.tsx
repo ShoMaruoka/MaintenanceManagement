@@ -7,8 +7,22 @@ interface Props {
   onRemove: (db: DbName, name: string) => void
 }
 
+type Engine = 'sqlserver' | 'mariadb'
+
+const MARIADB_TYPES: ModuleType[] = ['Stored', 'MariaDbFunction', 'MariaDbTable']
+
+const ENGINE_LABELS: Record<Engine, string> = {
+  sqlserver: 'SQL Server',
+  mariadb: 'MariaDB',
+}
+
+function engineOf(type: ModuleType): Engine {
+  return MARIADB_TYPES.includes(type) ? 'mariadb' : 'sqlserver'
+}
+
 export default function SelectionSummary({ selectedModulesByDb, moduleTypeOf, onRemove }: Props) {
   const [expandedDbs, setExpandedDbs] = useState<Set<DbName>>(new Set())
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
 
   const activeDbs = Array.from(selectedModulesByDb.entries()).filter(([, m]) => m.size > 0)
   if (activeDbs.length === 0) return null
@@ -19,6 +33,14 @@ export default function SelectionSummary({ selectedModulesByDb, moduleTypeOf, on
     setExpandedDbs(prev => {
       const next = new Set(prev)
       next.has(db) ? next.delete(db) : next.add(db)
+      return next
+    })
+  }
+
+  function toggleGroup(key: string) {
+    setExpandedGroups(prev => {
+      const next = new Set(prev)
+      next.has(key) ? next.delete(key) : next.add(key)
       return next
     })
   }
@@ -36,6 +58,10 @@ export default function SelectionSummary({ selectedModulesByDb, moduleTypeOf, on
       {activeDbs.map(([db, moduleMap]) => {
         const isExpanded = expandedDbs.has(db)
         const entries = Array.from(moduleMap.entries())
+        const entriesByEngine: Record<Engine, [string, OpType][]> = { sqlserver: [], mariadb: [] }
+        entries.forEach(entry => {
+          entriesByEngine[engineOf(moduleTypeOf(db, entry[0]))].push(entry)
+        })
         return (
           <div key={db} style={{ marginBottom: 6 }}>
             <div
@@ -59,35 +85,64 @@ export default function SelectionSummary({ selectedModulesByDb, moduleTypeOf, on
             </div>
             {isExpanded && (
               <div style={{ marginTop: 3, paddingLeft: 4 }}>
-                {entries.map(([name, op]) => (
-                  <div
-                    key={name}
-                    style={{
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      padding: '3px 4px', fontSize: 10, borderBottom: '1px solid #f0f1f3',
-                    }}
-                  >
-                    <div style={{ minWidth: 0, flex: 1 }}>
-                      <div style={{ color: '#3a3f46', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {name}
-                      </div>
-                      <div style={{ color: '#9aa0a8', fontSize: 9 }}>
-                        {moduleTypeOf(db, name)}
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0, marginLeft: 6 }}>
-                      <span style={{ color: opColor[op], fontWeight: 600, fontSize: 10 }}>{op}</span>
-                      <button
-                        onClick={e => { e.stopPropagation(); onRemove(db, name) }}
+                {(['sqlserver', 'mariadb'] as Engine[]).map(engine => {
+                  const engineEntries = entriesByEngine[engine]
+                  if (engineEntries.length === 0) return null
+                  const groupKey = `${db}:${engine}`
+                  const isGroupExpanded = expandedGroups.has(groupKey)
+                  return (
+                    <div key={engine} style={{ marginBottom: 4 }}>
+                      <div
+                        onClick={() => toggleGroup(groupKey)}
                         style={{
-                          border: 'none', background: 'none', cursor: 'pointer',
-                          color: '#aab0b4', padding: '1px 2px', lineHeight: 1, fontSize: 12,
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                          fontSize: 9, fontWeight: 600, color: '#8a919b', padding: '3px 4px 2px',
+                          cursor: 'pointer',
                         }}
-                        title="選択解除"
-                      >×</button>
+                      >
+                        <span>
+                          {ENGINE_LABELS[engine]}
+                          <span style={{ marginLeft: 4, color: '#aab0b4' }}>{engineEntries.length}件</span>
+                        </span>
+                        <svg
+                          width="8" height="8" viewBox="0 0 10 10" fill="none"
+                          style={{ transform: isGroupExpanded ? 'rotate(180deg)' : undefined, transition: 'transform .15s' }}
+                        >
+                          <path d="M2 4l3 3 3-3" stroke="#8a919b" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+                        </svg>
+                      </div>
+                      {isGroupExpanded && engineEntries.map(([name, op]) => (
+                        <div
+                          key={name}
+                          style={{
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                            padding: '3px 4px', fontSize: 10, borderBottom: '1px solid #f0f1f3',
+                          }}
+                        >
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div style={{ color: '#3a3f46', fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                              {name}
+                            </div>
+                            <div style={{ color: '#9aa0a8', fontSize: 9 }}>
+                              {moduleTypeOf(db, name)}
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexShrink: 0, marginLeft: 6 }}>
+                            <span style={{ color: opColor[op], fontWeight: 600, fontSize: 10 }}>{op}</span>
+                            <button
+                              onClick={e => { e.stopPropagation(); onRemove(db, name) }}
+                              style={{
+                                border: 'none', background: 'none', cursor: 'pointer',
+                                color: '#aab0b4', padding: '1px 2px', lineHeight: 1, fontSize: 12,
+                              }}
+                              title="選択解除"
+                            >×</button>
+                          </div>
+                        </div>
+                      ))}
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             )}
           </div>
