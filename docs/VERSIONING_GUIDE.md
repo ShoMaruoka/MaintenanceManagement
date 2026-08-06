@@ -22,9 +22,9 @@
 
 | # | ファイル | 記述 |
 |---|---------|------|
-| 1 | `backend/MaintenanceManagement.Api.csproj` | `<Version>1.1.1</Version>` |
-| 2 | `frontend/package.json` | `"version": "1.1.1"` |
-| 3 | Git タグ | `v1.1.1`（`v` プレフィックス付き） |
+| 1 | `backend/MaintenanceManagement.Api.csproj` | `<Version>1.2.0</Version>` |
+| 2 | `frontend/package.json` | `"version": "1.2.0"` |
+| 3 | Git タグ | `v1.2.0`（`v` プレフィックス付き） |
 
 `frontend/vite.config.ts` は `package.json` の値を `__APP_VERSION__` としてビルド時に埋め込むため、
 フロント側で版番号を直接書く必要はない。
@@ -33,16 +33,16 @@
 
 ## 画面での見え方
 
-サイドバーのロゴ「Maintenance Mgr」直下に `v1.1.1` が表示される
+サイドバーのロゴ「Maintenance Mgr」直下に `v1.2.0` が表示される
 （`frontend/src/components/Sidebar.tsx`、スタイルは `index.css` の `.sidebar-version`）。
 
 画面表示に使うのはフロントエンド側の版番号。起動時に `GET /api/version` を呼んでバックエンドの版と照合する。
 
 | 状態 | 表示 | tooltip |
 |------|------|---------|
-| 一致 | `v1.1.1`（グレー） | 画面・API ともに v1.1.1 |
-| 不一致 | `v1.1.1 ⚠`（警告色） | バージョン不一致 — 画面: v1.1.1 / API: v1.1.0 |
-| API 取得失敗 | `v1.1.1 ⚠`（警告色） | 画面: v1.1.1 / API: バージョンを取得できませんでした |
+| 一致 | `v1.2.0`（グレー） | 画面・API ともに v1.2.0 |
+| 不一致 | `v1.2.0 ⚠`（警告色） | バージョン不一致 — 画面: v1.2.0 / API: v1.1.0 |
+| API 取得失敗 | `v1.2.0 ⚠`（警告色） | 画面: v1.2.0 / API: バージョンを取得できませんでした |
 
 **⚠ が出たらデプロイが片方しか通っていない。** フロントエンドは `backend/wwwroot` に配置され、
 バックエンドは DLL として配信されるため、片方だけ古いまま動く状態が起こり得る。この表示はそれを検知するためにある。
@@ -55,8 +55,8 @@
 
 ```json
 {
-  "version": "1.1.1",
-  "informationalVersion": "1.1.1+1c645baca96bf05a7ed05ee9975e56c133eb9e28"
+  "version": "1.2.0",
+  "informationalVersion": "1.2.0+<ビルド元の commit hash>"
 }
 ```
 
@@ -64,7 +64,7 @@
 - `informationalVersion` — commit hash 付き。**どのコミットがビルドされたかを特定できる**
 
 commit hash は .NET 8 の Source Link が自動で付与するため、Jenkins 側での追加設定は不要。
-Git 情報のない環境でビルドした場合は hash が付かず `1.1.1` のみになる。
+Git 情報のない環境でビルドした場合は hash が付かず `1.2.0` のみになる。
 
 ---
 
@@ -90,7 +90,7 @@ dotnet build backend/MaintenanceManagement.Api.csproj
 
 ```bash
 git add backend/MaintenanceManagement.Api.csproj frontend/package.json
-git commit -m "Bump version to 1.1.2"
+git commit -m "Bump version to 1.2.1"
 git push origin main
 ```
 
@@ -99,12 +99,12 @@ git push origin main
 `-a` を付けて注釈付きタグにする。メッセージに変更内容を箇条書きで残す。
 
 ```bash
-git tag -a v1.1.2 -m "v1.1.2 — <リリース名>
+git tag -a v1.2.1 -m "v1.2.1 — <リリース名>
 
 - 変更点 1
 - 変更点 2"
 
-git push origin v1.1.2
+git push origin v1.2.1
 ```
 
 ### 5. 動作確認
@@ -135,6 +135,7 @@ curl http://<サーバー>/api/version
 | `v1.0.0` | `a8e2ce2` | 2026-07-28 | MVP。SQL Server 専用。STG 適用 / 本番前準備 / 実行履歴 / ユーザ管理 / Web ソース配信（Pilot）/ 画像準備 / 手動適用 |
 | `v1.1.0` | `8ea6ac2` | 2026-08-05 | MariaDB 適用機能（PR #30, issue22）。テーブル探索、DeployService パイプライン対応、削除候補検知、FUNCTION 対応、エンジン別ツリー分割 |
 | `v1.1.1` | `1c645ba` | 2026-08-06 | 本番準備画面の操作種別タグ付け、選択オブジェクトのエンジン別グループ化、UI 調整 |
+| `v1.2.0` | — | 2026-08-06 | バージョン表示機能。`/api/version` の追加、サイドバーへの版番号表示、フロント／バックエンドの版不一致検知 |
 
 ### 補足: MariaDB 対応の境界について
 
