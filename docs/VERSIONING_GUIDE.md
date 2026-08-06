@@ -22,9 +22,9 @@
 
 | # | ファイル | 記述 |
 |---|---------|------|
-| 1 | `backend/MaintenanceManagement.Api.csproj` | `<Version>1.2.0</Version>` |
-| 2 | `frontend/package.json` | `"version": "1.2.0"` |
-| 3 | Git タグ | `v1.2.0`（`v` プレフィックス付き） |
+| 1 | `backend/MaintenanceManagement.Api.csproj` | `<Version>1.2.1</Version>` |
+| 2 | `frontend/package.json` | `"version": "1.2.1"` |
+| 3 | Git タグ | `v1.2.1`（`v` プレフィックス付き） |
 
 `frontend/vite.config.ts` は `package.json` の値を `__APP_VERSION__` としてビルド時に埋め込むため、
 フロント側で版番号を直接書く必要はない。
@@ -33,16 +33,16 @@
 
 ## 画面での見え方
 
-サイドバーのロゴ「Maintenance Mgr」直下に `v1.2.0` が表示される
+サイドバーのロゴ「Maintenance Mgr」直下に `v1.2.1` が表示される
 （`frontend/src/components/Sidebar.tsx`、スタイルは `index.css` の `.sidebar-version`）。
 
 画面表示に使うのはフロントエンド側の版番号。起動時に `GET /api/version` を呼んでバックエンドの版と照合する。
 
 | 状態 | 表示 | tooltip |
 |------|------|---------|
-| 一致 | `v1.2.0`（グレー） | 画面・API ともに v1.2.0 |
-| 不一致 | `v1.2.0 ⚠`（警告色） | バージョン不一致 — 画面: v1.2.0 / API: v1.1.0 |
-| API 取得失敗 | `v1.2.0 ⚠`（警告色） | 画面: v1.2.0 / API: バージョンを取得できませんでした |
+| 一致 | `v1.2.1`（グレー） | 画面・API ともに v1.2.1 |
+| 不一致 | `v1.2.1 ⚠`（警告色） | バージョン不一致 — 画面: v1.2.1 / API: v1.2.0 |
+| API 取得失敗 | `v1.2.1 ⚠`（警告色） | 画面: v1.2.1 / API: バージョンを取得できませんでした |
 
 **⚠ が出たらデプロイが片方しか通っていない。** フロントエンドは `backend/wwwroot` に配置され、
 バックエンドは DLL として配信されるため、片方だけ古いまま動く状態が起こり得る。この表示はそれを検知するためにある。
@@ -55,8 +55,8 @@
 
 ```json
 {
-  "version": "1.2.0",
-  "informationalVersion": "1.2.0+<ビルド元の commit hash>"
+  "version": "1.2.1",
+  "informationalVersion": "1.2.1+<ビルド元の commit hash>"
 }
 ```
 
@@ -64,7 +64,7 @@
 - `informationalVersion` — commit hash 付き。**どのコミットがビルドされたかを特定できる**
 
 commit hash は .NET 8 の Source Link が自動で付与するため、Jenkins 側での追加設定は不要。
-Git 情報のない環境でビルドした場合は hash が付かず `1.2.0` のみになる。
+Git 情報のない環境でビルドした場合は hash が付かず `1.2.1` のみになる。
 
 ---
 
@@ -136,6 +136,7 @@ curl http://<サーバー>/api/version
 | `v1.1.0` | `8ea6ac2` | 2026-08-05 | MariaDB 適用機能（PR #30, issue22）。テーブル探索、DeployService パイプライン対応、削除候補検知、FUNCTION 対応、エンジン別ツリー分割 |
 | `v1.1.1` | `1c645ba` | 2026-08-06 | 本番準備画面の操作種別タグ付け、選択オブジェクトのエンジン別グループ化、UI 調整 |
 | `v1.2.0` | — | 2026-08-06 | バージョン表示機能。`/api/version` の追加、サイドバーへの版番号表示、フロント／バックエンドの版不一致検知 |
+| `v1.2.1` | — | 2026-08-06 | ダッシュボードのサマリーカードを実データに接続。`/api/history/stats` の追加（本番前準備の最終実行、直近30日の成功率、実行中セッション数） |
 
 ### 補足: MariaDB 対応の境界について
 
