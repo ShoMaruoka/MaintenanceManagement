@@ -83,6 +83,19 @@ export default function DeployStg() {
     [currentModules, search],
   )
 
+  // DB ごとの name→Module インデックス（線形探索の繰り返しを避ける）
+  const moduleIndexByDb = useMemo(() => {
+    const indexes = {} as Record<DbName, Map<string, Module>>
+    for (const db of Object.keys(modulesByDb) as DbName[]) {
+      const map = new Map<string, Module>()
+      for (const list of Object.values(modulesByDb[db] ?? {})) {
+        for (const m of list) map.set(m.name, m)
+      }
+      indexes[db] = map
+    }
+    return indexes
+  }, [modulesByDb])
+
   // 全DBの選択件数合計
   const totalSelected = useMemo(
     () => Array.from(selectedModulesByDb.values()).reduce((sum, m) => sum + m.size, 0),
@@ -130,7 +143,7 @@ export default function DeployStg() {
   }
 
   function findModule(db: DbName, name: string): Module | undefined {
-    return Object.values(modulesByDb[db] ?? {}).flat().find(m => m.name === name)
+    return moduleIndexByDb[db]?.get(name)
   }
 
   function moduleTypeOf(db: DbName, name: string): ModuleType {
@@ -143,34 +156,37 @@ export default function DeployStg() {
   }
 
   const selectedInCurrentType = filteredModules.filter(m => selectedModules.has(m.name))
-  const opsCount = { '新規': 0, '更新': 0, '削除': 0 }
-  // 全DBの操作区分合計（常に最新の modulesByDb から導出）
-  selectedModulesByDb.forEach((nameSet, db) => {
-    nameSet.forEach(name => {
-      const op = opTypeOf(db, name)
-      opsCount[op] = (opsCount[op] ?? 0) + 1
-    })
-  })
 
-  // 全DBの選択モジュールをまとめた配列（dbConfigs 順）。opType は確定時に都度導出する。
+  // 全DBの操作区分合計（インデックス経由・メモ化）
+  const opsCount = useMemo(() => {
+    const count = { '新規': 0, '更新': 0, '削除': 0 }
+    selectedModulesByDb.forEach((nameSet, db) => {
+      const index = moduleIndexByDb[db]
+      nameSet.forEach(name => {
+        const found = index?.get(name)
+        if (!found) return // 再フェッチで消えた選択は集計から除外
+        const op = resolveOpType(found)
+        count[op] = (count[op] ?? 0) + 1
+      })
+    })
+    return count
+  }, [selectedModulesByDb, moduleIndexByDb])
+
+  // 全DBの選択モジュールをまとめた配列。見つからない名前は送信対象から除外する。
   const allConfirmModules = useMemo((): MultiDbModules =>
     dbConfigs
-      .filter(db => (selectedModulesByDb.get(db.name)?.size ?? 0) > 0)
       .map(db => {
         const nameSet = selectedModulesByDb.get(db.name) ?? new Set<string>()
-        return {
-          db: db.name,
-          modules: Array.from(nameSet).map(name => {
-            const found = findModule(db.name, name)
-            return {
-              name,
-              opType: found ? resolveOpType(found) : '更新' as OpType,
-              type: found?.type ?? 'StoredProcedure' as ModuleType,
-            }
-          }),
-        }
-      }),
-    [dbConfigs, selectedModulesByDb, modulesByDb],
+        const index = moduleIndexByDb[db.name]
+        const modules = Array.from(nameSet).flatMap(name => {
+          const found = index?.get(name)
+          if (!found) return []
+          return [{ name, opType: resolveOpType(found), type: found.type }]
+        })
+        return { db: db.name, modules }
+      })
+      .filter(entry => entry.modules.length > 0),
+    [dbConfigs, selectedModulesByDb, moduleIndexByDb],
   )
 
   const handleDone = useCallback(() => setPageState('done'), [])

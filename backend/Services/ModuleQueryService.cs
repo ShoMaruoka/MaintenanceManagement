@@ -78,13 +78,19 @@ public class ModuleQueryService
     /// <summary>
     /// SQL Server 系の新規候補判定。
     /// <see cref="DbConfig.StgConnectionString"/> があれば STG 上の存在を権威ある判定とし、
-    /// 未設定または照会失敗時は Git ファイル存在（ApplyGitScan 側）にフォールバックする。
+    /// 未設定・照会失敗・判定不能（Dev 非空なのに STG 0 件）時は Git ファイル存在（ApplyGitScan 側）にフォールバックする。
     /// </summary>
     /// <returns>STG 判定に成功した moduleType の集合（Git 新規判定をスキップするため）。</returns>
     private async Task<HashSet<string>> MarkSqlServerNewCandidatesAsync(DbConfig config, ModuleListResponse response)
     {
         var stgResolvedTypes = new HashSet<string>(StringComparer.Ordinal);
-        if (string.IsNullOrEmpty(config.StgConnectionString)) return stgResolvedTypes;
+        if (string.IsNullOrEmpty(config.StgConnectionString))
+        {
+            _logger.LogInformation(
+                "StgConnectionString is empty for db={Db}; new/update detection falls back to Git file presence",
+                config.Name);
+            return stgResolvedTypes;
+        }
 
         var queries = new (string Sql, List<ModuleInfo> Target, string Label)[]
         {
@@ -110,14 +116,31 @@ public class ModuleQueryService
 
         for (var i = 0; i < queries.Length; i++)
         {
-            // null = 照会失敗 → 当該種別は Git フォールバック（ApplyGitScan）に委ねる
+            // null = 照会失敗 → Git フォールバック
             if (results[i] == null) continue;
+
+            // Dev にモジュールがあるのに STG が 0 件 → 誤接続の可能性が高いため判定不能扱いにする
+            if (!IsAuthoritativeStgResult(results[i]!, queries[i].Target.Count))
+            {
+                _logger.LogWarning(
+                    "STG returned 0 {Type} but Dev has {Count} module(s) for db={Db}; treating as inconclusive and falling back to Git",
+                    queries[i].Label, queries[i].Target.Count, config.Name);
+                continue;
+            }
+
             MarkAbsentAsNew(results[i]!, queries[i].Target);
             stgResolvedTypes.Add(queries[i].Label);
         }
 
         return stgResolvedTypes;
     }
+
+    /// <summary>
+    /// STG 照会結果を権威ある回答として採用してよいか。
+    /// Dev にモジュールがあるのに STG が 0 件のときは誤接続の可能性が高いため不採用（Git フォールバックへ）。
+    /// </summary>
+    internal static bool IsAuthoritativeStgResult(HashSet<string> stgNames, int existingDevCount) =>
+        stgNames.Count > 0 || existingDevCount == 0;
 
     /// <summary>
     /// presentNames に含まれない existing 要素を新規候補にする（STG / Git 共通）。
@@ -135,18 +158,21 @@ public class ModuleQueryService
     /// <summary>
     /// Git フォルダを 1 回列挙し、必要なら新規候補を付けたうえで削除候補を AddRange する。
     /// </summary>
-    private void ApplyGitScan(
+    internal void ApplyGitScan(
         string gitRepoPath, string folderName, string moduleType, string fileNamePrefix,
         List<ModuleInfo> existing, bool gitOnly, HashSet<string> stgResolvedTypes)
     {
         var gitNames = TryListGitModuleNames(gitRepoPath, folderName, fileNamePrefix);
-        // STG 判定済みでなければ Git を代理指標として新規判定する
+        // STG 判定済みでなければ Git を代理指標として新規判定する（照合キーは moduleType。folderName ではない）
         if (!stgResolvedTypes.Contains(moduleType))
             MarkNewCandidatesFromNames(gitNames, existing);
         existing.AddRange(BuildDeleteCandidates(gitNames, moduleType, existing, gitOnly));
     }
 
-    private void ApplyMariaDbStoredGitScan(
+    /// <summary>
+    /// MariaDB Stored フォルダを 1 回走査し、新規候補と削除候補を同時に処理する。
+    /// </summary>
+    internal void ApplyMariaDbStoredGitScan(
         string gitRepoPath, List<ModuleInfo> existingStored, List<ModuleInfo> existingFunctions)
     {
         // MariaDB に STG 接続は無いため常に Git。フォルダを 1 回だけ走査して新規＋削除を同時に処理する。
@@ -185,8 +211,9 @@ public class ModuleQueryService
 
             if (existingStored.Count > 0) MarkAbsentAsNew(gitNames, existingStored);
             if (existingFunctions.Count > 0) MarkAbsentAsNew(gitNames, existingFunctions);
-            existingStored.AddRange(storedCandidates);
-            existingFunctions.AddRange(functionCandidates);
+            // 削除候補は名前順で安定させる（画面表示・回帰比較のため）
+            existingStored.AddRange(storedCandidates.OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase));
+            existingFunctions.AddRange(functionCandidates.OrderBy(c => c.Name, StringComparer.OrdinalIgnoreCase));
         }
         catch (Exception ex)
         {
@@ -237,41 +264,14 @@ public class ModuleQueryService
         MarkAbsentAsNew(gitNames, existing);
     }
 
-    /// <summary>
-    /// DB に存在するモジュールについて、対応する Git ファイルが無ければ新規候補にする（Git フォールバック用）。
-    /// 対象タイプのサブフォルダ自体が無い場合は何もしない（誤って全件「新規」にしないため）。
-    /// </summary>
-    internal void MarkNewCandidates(string gitRepoPath, string folderName, string fileNamePrefix, List<ModuleInfo> existing)
-    {
-        var gitNames = TryListGitModuleNames(gitRepoPath, folderName, fileNamePrefix);
-        MarkNewCandidatesFromNames(gitNames, existing);
-    }
-
-    /// <summary>
-    /// MariaDB Stored フォルダ（PROCEDURE / FUNCTION 混在）向けの新規候補判定。
-    /// ファイル内容の種別判定は不要（DB 側で種別は確定済み）。存在有無のみ見る。
-    /// 例外時は以降のモジュールが未判定＝更新扱いで残る。
-    /// </summary>
-    internal void MarkMariaDbStoredNewCandidates(
-        string gitRepoPath, List<ModuleInfo> existingStored, List<ModuleInfo> existingFunctions)
-    {
-        if (existingStored.Count == 0 && existingFunctions.Count == 0) return;
-
-        var gitNames = TryListGitModuleNames(gitRepoPath, "Stored", "");
-        if (gitNames == null) return;
-
-        MarkAbsentAsNew(gitNames, existingStored);
-        MarkAbsentAsNew(gitNames, existingFunctions);
-    }
-
-    private static List<ModuleInfo> BuildDeleteCandidates(
+    internal static List<ModuleInfo> BuildDeleteCandidates(
         HashSet<string>? gitNames, string moduleType, List<ModuleInfo> existing, bool gitOnly)
     {
         var candidates = new List<ModuleInfo>();
         if (gitNames == null) return candidates;
 
         var existingNames = new HashSet<string>(existing.Select(m => m.Name), StringComparer.OrdinalIgnoreCase);
-        foreach (var name in gitNames)
+        foreach (var name in gitNames.OrderBy(n => n, StringComparer.OrdinalIgnoreCase))
         {
             if (existingNames.Contains(name)) continue;
             candidates.Add(new ModuleInfo
@@ -282,7 +282,6 @@ public class ModuleQueryService
                 GitOnly = gitOnly,
                 IsDeleteCandidate = true,
             });
-            existingNames.Add(name);
         }
         return candidates;
     }
@@ -300,24 +299,6 @@ public class ModuleQueryService
         {
             return false;
         }
-    }
-
-    /// <summary>
-    /// DB上には存在せず Git リポジトリにのみ残っているファイル（削除候補）を検出する。
-    /// SQL Server 系は GitRepoPath 配下・"dbo."プレフィックス付きファイル名が前提だが、
-    /// MariaDB 系（folderName と moduleType が一致しない場合がある）はプレフィックスなしのため
-    /// <paramref name="fileNamePrefix"/> で切り替えられるようにしている。
-    /// </summary>
-    /// <param name="gitRepoPath">Git リポジトリのルートパス（SQL Server: GitRepoPath / MariaDB: MariaDbGitRepoPath）。</param>
-    /// <param name="folderName">Git リポジトリ内の実フォルダ名（例: MariaDbTable の実フォルダ名は "Table"）。</param>
-    /// <param name="moduleType">検出結果の ModuleInfo.Type に設定する内部種別値。</param>
-    /// <param name="fileNamePrefix">ファイル名プレフィックス（SQL Server: "dbo." / MariaDB: ""）。</param>
-    internal List<ModuleInfo> FindDeleteCandidates(
-        string gitRepoPath, string folderName, string moduleType, List<ModuleInfo> existing,
-        bool gitOnly, string fileNamePrefix = "dbo.")
-    {
-        var gitNames = TryListGitModuleNames(gitRepoPath, folderName, fileNamePrefix);
-        return BuildDeleteCandidates(gitNames, moduleType, existing, gitOnly);
     }
 
     /// <summary>
