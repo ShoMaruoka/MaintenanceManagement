@@ -514,3 +514,4 @@ c:\Users\y.sasaki\orca\workspaces\MaintenanceManagement\chinook\backend\Tests\bi
 c:\Users\y.sasaki\orca\workspaces\MaintenanceManagement\chinook\backend\Tests\obj\Debug\net8.0\Maintena.BA424DFF.Up2Date
 c:\Users\y.sasaki\orca\workspaces\MaintenanceManagement\chinook\backend\Tests\obj\Debug\net8.0\MaintenanceManagement.Api.Tests.genruntimeconfig.cache
 c:\Users\y.sasaki\orca\workspaces\MaintenanceManagement\chinook\backend\Tests\obj\Debug\net8.0\ref\MaintenanceManagement.Api.Tests.dll
+C:\Users\y.sasaki\orca\workspaces\MaintenanceManagement\chinook\backend\Tests\bin\Debug\net8.0\MaintenanceManagement.Api.staticwebassets.runtime.json

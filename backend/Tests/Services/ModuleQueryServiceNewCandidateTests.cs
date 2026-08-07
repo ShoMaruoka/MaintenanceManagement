@@ -262,4 +262,54 @@ public class ModuleQueryServiceNewCandidateTests
             DeleteTempGitRoot(tmp);
         }
     }
+
+    [Fact]
+    public void MarkAbsentAsNew_MarksOnlyMissingNames_CaseInsensitive()
+    {
+        var present = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "ExistsInStg" };
+        var existing = new List<ModuleInfo>
+        {
+            Mod("ExistsInStg"),
+            Mod("MissingInStg"),
+            Mod("existsinstg"), // 大文字小文字違い → STG にある扱い
+        };
+        var service = CreateService();
+
+        service.MarkAbsentAsNew(present, existing);
+
+        Assert.False(existing[0].IsNewCandidate);
+        Assert.True(existing[1].IsNewCandidate);
+        Assert.False(existing[2].IsNewCandidate);
+    }
+
+    [Fact]
+    public void MarkAbsentAsNew_EmptyExisting_IsNoOp()
+    {
+        var present = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "A" };
+        var service = CreateService();
+        service.MarkAbsentAsNew(present, []);
+    }
+
+    [Fact]
+    public void TryListGitModuleNames_IsCaseInsensitive()
+    {
+        var tmp = CreateTempGitRoot();
+        try
+        {
+            var dir = Path.Combine(tmp, "StoredProcedure");
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, "dbo.MyProc.sql"), "-- stub");
+
+            var service = CreateService();
+            var names = service.TryListGitModuleNames(tmp, "StoredProcedure", "dbo.");
+
+            Assert.NotNull(names);
+            Assert.Contains("myproc", names!);
+            Assert.Contains("MYPROC", names!);
+        }
+        finally
+        {
+            DeleteTempGitRoot(tmp);
+        }
+    }
 }

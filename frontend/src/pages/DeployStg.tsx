@@ -42,7 +42,7 @@ export default function DeployStg() {
   const [selectedDb, setSelectedDb] = useState<DbName>('kaios')
   const [activeEngine, setActiveEngine] = useState<Engine>('sqlserver')
   const [activeType, setActiveType] = useState<ModuleType>('StoredProcedure')
-  const [selectedModulesByDb, setSelectedModulesByDb] = useState<Map<DbName, Map<string, OpType>>>(new Map())
+  const [selectedModulesByDb, setSelectedModulesByDb] = useState<Map<DbName, Set<string>>>(new Map())
   const [search, setSearch] = useState('')
   const [pageState, setPageState] = useState<PageState>('select')
   const [modulesByDb, setModulesByDb] = useState<Record<DbName, Record<ModuleType, Module[]>>>({
@@ -75,7 +75,7 @@ export default function DeployStg() {
     loadModules()
   }, [selectedDb])
 
-  const selectedModules = selectedModulesByDb.get(selectedDb) ?? new Map<string, OpType>()
+  const selectedModules = selectedModulesByDb.get(selectedDb) ?? new Set<string>()
 
   const currentModules = modulesByDb[selectedDb]?.[activeType] ?? []
   const filteredModules = useMemo(
@@ -92,10 +92,10 @@ export default function DeployStg() {
   // 現在のDBの選択件数（種別タブや操作区分カウント用）
   const currentDbSelected = selectedModules.size
 
-  function updateDbSelection(db: DbName, updater: (m: Map<string, OpType>) => Map<string, OpType>) {
+  function updateDbSelection(db: DbName, updater: (m: Set<string>) => Set<string>) {
     setSelectedModulesByDb(prev => {
       const next = new Map(prev)
-      next.set(db, updater(new Map(prev.get(db))))
+      next.set(db, updater(new Set(prev.get(db))))
       return next
     })
   }
@@ -103,20 +103,20 @@ export default function DeployStg() {
   function toggleModule(module: Module) {
     updateDbSelection(selectedDb, m => {
       if (m.has(module.name)) m.delete(module.name)
-      else m.set(module.name, resolveOpType(module))
+      else m.add(module.name)
       return m
     })
   }
 
   function selectAll() {
     updateDbSelection(selectedDb, m => {
-      filteredModules.forEach(mod => { if (!m.has(mod.name)) m.set(mod.name, resolveOpType(mod)) })
+      filteredModules.forEach(mod => m.add(mod.name))
       return m
     })
   }
 
   function clearAll() {
-    updateDbSelection(selectedDb, () => new Map())
+    updateDbSelection(selectedDb, () => new Set())
   }
 
   function removeModule(db: DbName, name: string) {
@@ -129,30 +129,44 @@ export default function DeployStg() {
     setSearch('')
   }
 
+  function findModule(db: DbName, name: string): Module | undefined {
+    return Object.values(modulesByDb[db] ?? {}).flat().find(m => m.name === name)
+  }
+
   function moduleTypeOf(db: DbName, name: string): ModuleType {
-    const allModules = Object.values(modulesByDb[db] ?? {}).flat()
-    return allModules.find(m => m.name === name)?.type ?? 'StoredProcedure'
+    return findModule(db, name)?.type ?? 'StoredProcedure'
+  }
+
+  function opTypeOf(db: DbName, name: string): OpType {
+    const found = findModule(db, name)
+    return found ? resolveOpType(found) : '更新'
   }
 
   const selectedInCurrentType = filteredModules.filter(m => selectedModules.has(m.name))
   const opsCount = { '新規': 0, '更新': 0, '削除': 0 }
-  // 全DBの操作区分合計
-  selectedModulesByDb.forEach(map => {
-    map.forEach(op => { opsCount[op] = (opsCount[op] ?? 0) + 1 })
+  // 全DBの操作区分合計（常に最新の modulesByDb から導出）
+  selectedModulesByDb.forEach((nameSet, db) => {
+    nameSet.forEach(name => {
+      const op = opTypeOf(db, name)
+      opsCount[op] = (opsCount[op] ?? 0) + 1
+    })
   })
 
-  // 全DBの選択モジュールをまとめた配列（dbConfigs 順）
+  // 全DBの選択モジュールをまとめた配列（dbConfigs 順）。opType は確定時に都度導出する。
   const allConfirmModules = useMemo((): MultiDbModules =>
     dbConfigs
       .filter(db => (selectedModulesByDb.get(db.name)?.size ?? 0) > 0)
       .map(db => {
-        const selMap = selectedModulesByDb.get(db.name) ?? new Map()
-        const allMods = Object.values(modulesByDb[db.name] ?? {}).flat()
+        const nameSet = selectedModulesByDb.get(db.name) ?? new Set<string>()
         return {
           db: db.name,
-          modules: Array.from(selMap.entries()).map(([name, opType]) => {
-            const found = allMods.find(m => m.name === name)
-            return { name, opType, type: found?.type ?? 'StoredProcedure' as ModuleType }
+          modules: Array.from(nameSet).map(name => {
+            const found = findModule(db.name, name)
+            return {
+              name,
+              opType: found ? resolveOpType(found) : '更新' as OpType,
+              type: found?.type ?? 'StoredProcedure' as ModuleType,
+            }
           }),
         }
       }),
@@ -172,7 +186,7 @@ export default function DeployStg() {
           <div style={{ padding: '12px 0 0' }}>
             <button className="btn-secondary" onClick={() => {
               // 実行した全DBの選択をクリア
-              allConfirmModules.forEach(({ db }) => updateDbSelection(db, () => new Map()))
+              allConfirmModules.forEach(({ db }) => updateDbSelection(db, () => new Set()))
               setPageState('select')
             }}>
               ← 適用画面に戻る
@@ -214,6 +228,7 @@ export default function DeployStg() {
         <SelectionSummary
           selectedModulesByDb={selectedModulesByDb}
           moduleTypeOf={moduleTypeOf}
+          opTypeOf={opTypeOf}
           onRemove={removeModule}
         />
         <div className="db-selector-note">複数 DB は順次実行されます。並列実行は行いません。</div>

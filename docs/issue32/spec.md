@@ -22,12 +22,18 @@ DBとGitリポジトリの存在有無から自動判定されているが、「
 `QueryMariaDbRoutinesAsync` / `QueryMariaDbTablesAsync` が返す各モジュール）について、
 対応するGitファイルが存在するかどうかで以下のように判定する。
 
-| DB | Git | 操作区分 |
-|---|---|---|
-| 存在する | 存在する | 更新 |
-| 存在する | 存在しない | 新規 |
-| 存在しない | 存在する | 削除（既存ロジックのまま変更なし） |
+| DB (Dev) | STG | Git | 操作区分 |
+|---|---|---|---|
+| 存在する | 存在する | （不問） | 更新 |
+| 存在する | 存在しない | （不問） | 新規 |
+| 存在する | （接続未設定） | 存在する | 更新（Git 代理） |
+| 存在する | （接続未設定） | 存在しない | 新規（Git 代理） |
+| 存在しない | （不問） | 存在する | 削除（既存ロジックのまま変更なし） |
 
+- SQL Server: `StgConnectionString` が設定されていれば STG DB への存在照会を権威ある判定とする。
+  未設定または照会失敗時のみ、Git ファイル存在を代理指標とする（従来方式）。
+- MariaDB: STG 専用接続が無いため Git ファイル存在で判定する（MariaDB の適用 SQL は
+  新規／更新とも DROP IF EXISTS + CREATE のため、SQL Server ほど区分の影響は大きくない）。
 - 判定は名前の存在有無のみで行う。ファイル内容の差分比較は行わない（既存の削除判定と
   同じ方針）。
 - 対象は全種別（StoredProcedure, Function, VIEW, Stored, MariaDbFunction）に加えて、
@@ -125,15 +131,17 @@ frontend/src/types.ts                 → Module/OpType等の型定義
 - [x] 既存の削除候補判定・適用フロー（DeployService等）に回帰がない
   （`ModuleQueryServiceNewCandidateTests` 10件合格。fixture 依存の既存4件はこの環境では未実行）
 
-**実装完了（2026-08-07）**: Backend（`IsNewCandidate` / `MarkNewCandidates` /
-`MarkMariaDbStoredNewCandidates`）と Frontend（`resolveOpType` / 固定バッジ・手動UI撤去）を実装し、
-Task 7 の通し確認も完了。詳細は [`PLAN.md`](./PLAN.md)。
+**実装完了（2026-08-07）**: Backend（`IsNewCandidate` / STG 優先の `MarkAbsentAsNew` /
+Git フォールバック）と Frontend（`resolveOpType` / 選択は `Set`・opType は都度導出 /
+固定バッジ）を実装し、Task 7 の通し確認も完了。PR レビュー指摘 1〜5 にも対応済み。
+詳細は [`PLAN.md`](./PLAN.md)。
 
 **実装上の差分メモ**:
-- 新規判定テストは `Directory.CreateTempSubdirectory()` ではなく、
-  `Path.GetTempPath()` + GUID の一時ディレクトリで自己完結させた
+- 新規判定テストは `Path.GetTempPath()` + GUID の一時ディレクトリで自己完結
   （当該環境の `DirectoryInfo` が `IDisposable` 非対応のため）。
 - フロントの `formatModules` は API 欠落時に備え `!!` で boolean 化している。
+- SQL Server の新規／更新は `StgConnectionString` による STG 存在判定を優先する。
+  MariaDB は Git 代理のまま（STG 専用接続が設定に無い）。
 
 **既知の限界（対応不要・仕様として明記）**: 対象タイプのGitサブフォルダが丸ごと存在しない
 （gitは空ディレクトリを追跡しないため起こりうる）場合、当該タイプのDBモジュールは
