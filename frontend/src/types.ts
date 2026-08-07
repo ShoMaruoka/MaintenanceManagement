@@ -24,6 +24,7 @@ export interface Module {
   modifyDate: string
   type: ModuleType
   isDeleteCandidate: boolean
+  isNewCandidate: boolean
 }
 
 export interface SelectedModule {

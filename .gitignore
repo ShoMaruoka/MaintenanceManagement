@@ -11,3 +11,5 @@ backend/appsettings.json
 backend/wwwroot/
 tasks/
 graphify-out/
+backend/Tests/bin/
+backend/Tests/obj/

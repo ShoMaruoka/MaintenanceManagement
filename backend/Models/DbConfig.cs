@@ -15,7 +15,11 @@ public class DbConfig
 
     // 接続文字列（3 環境）
     public string DevConnectionString { get; set; } = "";   // 開発DB への接続（モジュール一覧取得）
-    public string StgConnectionString { get; set; } = "";   // STG DB への接続（フェーズ2用・現在未使用）
+    /// <summary>
+    /// STG DB への接続。操作区分の新規／更新判定（STG 上のオブジェクト存在確認）に使用する。
+    /// 未設定時は Git ファイル存在チェックにフォールバックする。
+    /// </summary>
+    public string StgConnectionString { get; set; } = "";
     public string PrdConnectionString { get; set; } = "";   // 本番DB への接続（フェーズ2用・現在未使用）
 
     // MariaDB（DevDB のみ対象）

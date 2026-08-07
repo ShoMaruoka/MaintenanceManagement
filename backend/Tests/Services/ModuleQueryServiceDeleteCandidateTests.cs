@@ -4,51 +4,72 @@ using MaintenanceManagement.Api.Services;
 
 namespace MaintenanceManagement.Api.Tests.Services;
 
+/// <summary>
+/// 削除候補検出は本番経路 ApplyGitScan 経由で検証する。
+/// 外部 fixture（test/）に依存しない自己完結型。
+/// </summary>
 public class ModuleQueryServiceDeleteCandidateTests
 {
-    private static string FindRepoRoot()
+    private static ModuleQueryService CreateService() =>
+        new(NullLogger<ModuleQueryService>.Instance);
+
+    private static HashSet<string> NoStg() => new(StringComparer.Ordinal);
+
+    private static string CreateTempGitRoot()
     {
-        var dir = new DirectoryInfo(AppContext.BaseDirectory);
-        while (dir != null)
+        var path = Path.Combine(Path.GetTempPath(), "chinook-delcand-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(path);
+        return path;
+    }
+
+    private static void DeleteTempGitRoot(string path)
+    {
+        try
         {
-            if (Directory.Exists(Path.Combine(dir.FullName, "test", "Kaios_MariaDB_rep")))
-                return dir.FullName;
-            dir = dir.Parent;
+            if (Directory.Exists(path))
+                Directory.Delete(path, recursive: true);
         }
-        throw new DirectoryNotFoundException("test/Kaios_MariaDB_rep が見つかりません（リポジトリ直下から実行してください）");
+        catch { /* best-effort */ }
     }
 
     [Fact]
-    public void FindDeleteCandidates_MariaDbTable_ResolvesWithoutDboPrefix()
+    public void ApplyGitScan_MariaDbTable_ResolvesWithoutDboPrefix()
     {
-        var repoRoot = FindRepoRoot();
-        var mariaDbGitRepoPath = Path.Combine(repoRoot, "test", "Kaios_MariaDB_rep");
-        var service = new ModuleQueryService(NullLogger<ModuleQueryService>.Instance);
+        var tmp = CreateTempGitRoot();
+        try
+        {
+            var dir = Path.Combine(tmp, "Table");
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, "tm0010catalogno.sql"), "-- stub");
 
-        // DB上には存在しない（existing が空）前提で、Git 側の実ファイルが削除候補として検出されることを確認
-        var candidates = service.FindDeleteCandidates(
-            mariaDbGitRepoPath, "Table", "MariaDbTable", [], gitOnly: true, fileNamePrefix: "");
+            var existing = new List<ModuleInfo>();
+            CreateService().ApplyGitScan(tmp, "Table", "MariaDbTable", "", existing, gitOnly: true, NoStg());
 
-        Assert.Contains(candidates, c => c.Name == "tm0010catalogno");
-        var candidate = candidates.Single(c => c.Name == "tm0010catalogno");
-        Assert.Equal("MariaDbTable", candidate.Type);
-        Assert.True(candidate.GitOnly);
-        Assert.True(candidate.IsDeleteCandidate);
+            Assert.Contains(existing, c => c.Name == "tm0010catalogno");
+            var candidate = existing.Single(c => c.Name == "tm0010catalogno");
+            Assert.Equal("MariaDbTable", candidate.Type);
+            Assert.True(candidate.GitOnly);
+            Assert.True(candidate.IsDeleteCandidate);
+        }
+        finally { DeleteTempGitRoot(tmp); }
     }
 
     [Fact]
-    public void FindDeleteCandidates_SqlServerTable_StillStripsDboPrefix()
+    public void ApplyGitScan_SqlServerPrefix_DoesNotMatchUnprefixedFiles()
     {
-        var repoRoot = FindRepoRoot();
-        // SQL Server用の実リポジトリは無いため、既存挙動（dbo.プレフィックス除去）自体をロジックとして検証する
-        var mariaDbGitRepoPath = Path.Combine(repoRoot, "test", "Kaios_MariaDB_rep");
-        var service = new ModuleQueryService(NullLogger<ModuleQueryService>.Instance);
+        var tmp = CreateTempGitRoot();
+        try
+        {
+            // MariaDB 風のプレフィックス無しファイルは、SQL Server 用 dbo. プレフィックスでは検出しない
+            var dir = Path.Combine(tmp, "Stored");
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, "SomeProc.sql"), "-- stub");
 
-        // Stored フォルダには "dbo." プレフィックスのファイルは無いため、SQL Server 用呼び出し（プレフィックスあり）は
-        // 何も検出しないはず＝挙動が変わっていないことの確認
-        var candidates = service.FindDeleteCandidates(
-            mariaDbGitRepoPath, "Stored", "StoredProcedure", [], gitOnly: false, fileNamePrefix: "dbo.");
+            var existing = new List<ModuleInfo>();
+            CreateService().ApplyGitScan(tmp, "Stored", "StoredProcedure", "dbo.", existing, gitOnly: false, NoStg());
 
-        Assert.Empty(candidates);
+            Assert.Empty(existing);
+        }
+        finally { DeleteTempGitRoot(tmp); }
     }
 }

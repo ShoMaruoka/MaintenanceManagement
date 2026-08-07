@@ -5,6 +5,7 @@ import LogViewer from '../components/LogViewer'
 import SelectionSummary from '../components/SelectionSummary'
 import { getDbList, getModules } from '../api/modules'
 import type { DbListItem } from '../api/modules'
+import { resolveOpType } from '../lib/opType'
 
 type Engine = 'sqlserver' | 'mariadb'
 
@@ -28,9 +29,11 @@ const MODULE_TYPE_LABELS: Partial<Record<ModuleType, string>> = {
 
 const GIT_ONLY_TYPES: ModuleType[] = ['Table', 'UserDefinedTableType', 'MariaDbTable']
 
-// ユーザーが操作区分ドロップダウンで選べる値。
-// 「削除」は削除候補モジュール（別ルート）で自動設定されるため、選択肢からは除外する。
-const SELECTABLE_OP_TYPES: OpType[] = ['更新', '新規']
+function opBadgeClass(op: OpType): string {
+  if (op === '削除') return 'op-badge op-badge-delete op-badge-fixed'
+  if (op === '新規') return 'op-badge op-badge-new op-badge-fixed'
+  return 'op-badge op-badge-update op-badge-fixed'
+}
 
 type PageState = 'select' | 'confirm' | 'log' | 'done'
 
@@ -39,7 +42,7 @@ export default function DeployStg() {
   const [selectedDb, setSelectedDb] = useState<DbName>('kaios')
   const [activeEngine, setActiveEngine] = useState<Engine>('sqlserver')
   const [activeType, setActiveType] = useState<ModuleType>('StoredProcedure')
-  const [selectedModulesByDb, setSelectedModulesByDb] = useState<Map<DbName, Map<string, OpType>>>(new Map())
+  const [selectedModulesByDb, setSelectedModulesByDb] = useState<Map<DbName, Set<string>>>(new Map())
   const [search, setSearch] = useState('')
   const [pageState, setPageState] = useState<PageState>('select')
   const [modulesByDb, setModulesByDb] = useState<Record<DbName, Record<ModuleType, Module[]>>>({
@@ -72,13 +75,26 @@ export default function DeployStg() {
     loadModules()
   }, [selectedDb])
 
-  const selectedModules = selectedModulesByDb.get(selectedDb) ?? new Map<string, OpType>()
+  const selectedModules = selectedModulesByDb.get(selectedDb) ?? new Set<string>()
 
   const currentModules = modulesByDb[selectedDb]?.[activeType] ?? []
   const filteredModules = useMemo(
     () => currentModules.filter(m => m.name.toLowerCase().includes(search.toLowerCase())),
     [currentModules, search],
   )
+
+  // DB ごとの name→Module インデックス（線形探索の繰り返しを避ける）
+  const moduleIndexByDb = useMemo(() => {
+    const indexes = {} as Record<DbName, Map<string, Module>>
+    for (const db of Object.keys(modulesByDb) as DbName[]) {
+      const map = new Map<string, Module>()
+      for (const list of Object.values(modulesByDb[db] ?? {})) {
+        for (const m of list) map.set(m.name, m)
+      }
+      indexes[db] = map
+    }
+    return indexes
+  }, [modulesByDb])
 
   // 全DBの選択件数合計
   const totalSelected = useMemo(
@@ -89,10 +105,10 @@ export default function DeployStg() {
   // 現在のDBの選択件数（種別タブや操作区分カウント用）
   const currentDbSelected = selectedModules.size
 
-  function updateDbSelection(db: DbName, updater: (m: Map<string, OpType>) => Map<string, OpType>) {
+  function updateDbSelection(db: DbName, updater: (m: Set<string>) => Set<string>) {
     setSelectedModulesByDb(prev => {
       const next = new Map(prev)
-      next.set(db, updater(new Map(prev.get(db))))
+      next.set(db, updater(new Set(prev.get(db))))
       return next
     })
   }
@@ -100,31 +116,20 @@ export default function DeployStg() {
   function toggleModule(module: Module) {
     updateDbSelection(selectedDb, m => {
       if (m.has(module.name)) m.delete(module.name)
-      else m.set(module.name, module.isDeleteCandidate ? '削除' : '更新')
-      return m
-    })
-  }
-
-  function setOpType(name: string, op: OpType) {
-    updateDbSelection(selectedDb, m => { m.set(name, op); return m })
-  }
-
-  function setOpTypeBulk(modules: Module[], op: OpType) {
-    updateDbSelection(selectedDb, m => {
-      modules.forEach(mod => { if (m.has(mod.name)) m.set(mod.name, mod.isDeleteCandidate ? '削除' : op) })
+      else m.add(module.name)
       return m
     })
   }
 
   function selectAll() {
     updateDbSelection(selectedDb, m => {
-      filteredModules.forEach(mod => { if (!m.has(mod.name)) m.set(mod.name, mod.isDeleteCandidate ? '削除' : '更新') })
+      filteredModules.forEach(mod => m.add(mod.name))
       return m
     })
   }
 
   function clearAll() {
-    updateDbSelection(selectedDb, () => new Map())
+    updateDbSelection(selectedDb, () => new Set())
   }
 
   function removeModule(db: DbName, name: string) {
@@ -137,34 +142,51 @@ export default function DeployStg() {
     setSearch('')
   }
 
+  function findModule(db: DbName, name: string): Module | undefined {
+    return moduleIndexByDb[db]?.get(name)
+  }
+
   function moduleTypeOf(db: DbName, name: string): ModuleType {
-    const allModules = Object.values(modulesByDb[db] ?? {}).flat()
-    return allModules.find(m => m.name === name)?.type ?? 'StoredProcedure'
+    return findModule(db, name)?.type ?? 'StoredProcedure'
+  }
+
+  function opTypeOf(db: DbName, name: string): OpType {
+    const found = findModule(db, name)
+    return found ? resolveOpType(found) : '更新'
   }
 
   const selectedInCurrentType = filteredModules.filter(m => selectedModules.has(m.name))
-  const opsCount = { '新規': 0, '更新': 0, '削除': 0 }
-  // 全DBの操作区分合計
-  selectedModulesByDb.forEach(map => {
-    map.forEach(op => { opsCount[op] = (opsCount[op] ?? 0) + 1 })
-  })
 
-  // 全DBの選択モジュールをまとめた配列（dbConfigs 順）
+  // 全DBの操作区分合計（インデックス経由・メモ化）
+  const opsCount = useMemo(() => {
+    const count = { '新規': 0, '更新': 0, '削除': 0 }
+    selectedModulesByDb.forEach((nameSet, db) => {
+      const index = moduleIndexByDb[db]
+      nameSet.forEach(name => {
+        const found = index?.get(name)
+        if (!found) return // 再フェッチで消えた選択は集計から除外
+        const op = resolveOpType(found)
+        count[op] = (count[op] ?? 0) + 1
+      })
+    })
+    return count
+  }, [selectedModulesByDb, moduleIndexByDb])
+
+  // 全DBの選択モジュールをまとめた配列。見つからない名前は送信対象から除外する。
   const allConfirmModules = useMemo((): MultiDbModules =>
     dbConfigs
-      .filter(db => (selectedModulesByDb.get(db.name)?.size ?? 0) > 0)
       .map(db => {
-        const selMap = selectedModulesByDb.get(db.name) ?? new Map()
-        const allMods = Object.values(modulesByDb[db.name] ?? {}).flat()
-        return {
-          db: db.name,
-          modules: Array.from(selMap.entries()).map(([name, opType]) => {
-            const found = allMods.find(m => m.name === name)
-            return { name, opType, type: found?.type ?? 'StoredProcedure' as ModuleType }
-          }),
-        }
-      }),
-    [dbConfigs, selectedModulesByDb, modulesByDb],
+        const nameSet = selectedModulesByDb.get(db.name) ?? new Set<string>()
+        const index = moduleIndexByDb[db.name]
+        const modules = Array.from(nameSet).flatMap(name => {
+          const found = index?.get(name)
+          if (!found) return []
+          return [{ name, opType: resolveOpType(found), type: found.type }]
+        })
+        return { db: db.name, modules }
+      })
+      .filter(entry => entry.modules.length > 0),
+    [dbConfigs, selectedModulesByDb, moduleIndexByDb],
   )
 
   const handleDone = useCallback(() => setPageState('done'), [])
@@ -180,7 +202,7 @@ export default function DeployStg() {
           <div style={{ padding: '12px 0 0' }}>
             <button className="btn-secondary" onClick={() => {
               // 実行した全DBの選択をクリア
-              allConfirmModules.forEach(({ db }) => updateDbSelection(db, () => new Map()))
+              allConfirmModules.forEach(({ db }) => updateDbSelection(db, () => new Set()))
               setPageState('select')
             }}>
               ← 適用画面に戻る
@@ -222,6 +244,7 @@ export default function DeployStg() {
         <SelectionSummary
           selectedModulesByDb={selectedModulesByDb}
           moduleTypeOf={moduleTypeOf}
+          opTypeOf={opTypeOf}
           onRemove={removeModule}
         />
         <div className="db-selector-note">複数 DB は順次実行されます。並列実行は行いません。</div>
@@ -299,25 +322,6 @@ export default function DeployStg() {
                   onChange={e => setSearch(e.target.value)}
                 />
               </div>
-              {selectedInCurrentType.length > 0 && (
-                <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: '#5a6472' }}>
-                  操作区分を一括変更
-                  <select
-                    value=""
-                    onChange={e => {
-                      const op = e.target.value as OpType
-                      if (!op) return
-                      setOpTypeBulk(selectedInCurrentType, op)
-                    }}
-                    style={{ fontSize: 12, padding: '2px 4px' }}
-                  >
-                    <option value="" disabled>選択...</option>
-                    {SELECTABLE_OP_TYPES.map(op => (
-                      <option key={op} value={op}>{op}</option>
-                    ))}
-                  </select>
-                </span>
-              )}
               <span className="select-all-btn" onClick={selectAll}>すべて選択</span>
             </div>
 
@@ -333,7 +337,7 @@ export default function DeployStg() {
               )}
               {!loading && !error && filteredModules.map(module => {
                 const isSelected = selectedModules.has(module.name)
-                const opType = selectedModules.get(module.name) ?? '更新'
+                const opType = resolveOpType(module)
                 return (
                   <div
                     key={module.name}
@@ -360,22 +364,7 @@ export default function DeployStg() {
                       </div>
                     </div>
                     {isSelected ? (
-                      module.isDeleteCandidate ? (
-                        <span className="op-badge op-badge-delete op-badge-fixed">削除</span>
-                      ) : (
-                        <div onClick={e => e.stopPropagation()}>
-                          <select
-                            value={opType}
-                            onChange={e => setOpType(module.name, e.target.value as OpType)}
-                            className={`op-badge op-badge-${opType === '更新' ? 'update' : opType === '新規' ? 'new' : 'delete'}`}
-                            style={{ border: 'none', outline: 'none', appearance: 'none', cursor: 'pointer', paddingRight: 14 }}
-                          >
-                            {SELECTABLE_OP_TYPES.map(op => (
-                              <option key={op} value={op}>{op}</option>
-                            ))}
-                          </select>
-                        </div>
-                      )
+                      <span className={opBadgeClass(opType)}>{opType}</span>
                     ) : (
                       <span className="module-item-unselected">未選択</span>
                     )}
