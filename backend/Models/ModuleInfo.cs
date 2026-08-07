@@ -7,6 +7,11 @@ public class ModuleInfo
     public string ModifyDate { get; set; } = "";
     public bool GitOnly { get; set; }
     public bool IsDeleteCandidate { get; set; }
+    /// <summary>
+    /// DBに存在するが対応するGitファイルが無い場合 true（操作区分「新規」）。
+    /// 既定は false（＝更新扱い）。
+    /// </summary>
+    public bool IsNewCandidate { get; set; }
 }
 
 public class ModuleListResponse

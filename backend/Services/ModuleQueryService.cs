@@ -57,6 +57,15 @@ public class ModuleQueryService
             response.MariaDbTables = await QueryMariaDbTablesAsync(config.MariaDbConnectionString);
         }
 
+        // 新規候補判定は削除候補の AddRange より前に行う（削除候補＝Gitのみは判定対象外にするため）
+        MarkNewCandidates(config.GitRepoPath, "StoredProcedure", "dbo.", response.StoredProcedures);
+        MarkNewCandidates(config.GitRepoPath, "Function", "dbo.", response.Functions);
+        MarkNewCandidates(config.GitRepoPath, "VIEW", "dbo.", response.Views);
+        MarkNewCandidates(config.GitRepoPath, "Table", "dbo.", response.Tables);
+        MarkNewCandidates(config.GitRepoPath, "UserDefinedTableType", "dbo.", response.UserDefinedTableTypes);
+        MarkMariaDbStoredNewCandidates(config.MariaDbGitRepoPath, response.MariaDb, response.MariaDbFunctions);
+        MarkNewCandidates(config.MariaDbGitRepoPath, "Table", "", response.MariaDbTables);
+
         response.StoredProcedures.AddRange(FindDeleteCandidates(config.GitRepoPath, "StoredProcedure", "StoredProcedure", response.StoredProcedures, gitOnly: false));
         response.Functions.AddRange(FindDeleteCandidates(config.GitRepoPath, "Function", "Function", response.Functions, gitOnly: false));
         response.Views.AddRange(FindDeleteCandidates(config.GitRepoPath, "VIEW", "VIEW", response.Views, gitOnly: false));
@@ -73,6 +82,59 @@ public class ModuleQueryService
         response.MariaDbTables.AddRange(FindDeleteCandidates(config.MariaDbGitRepoPath, "Table", "MariaDbTable", response.MariaDbTables, gitOnly: true, fileNamePrefix: ""));
 
         return response;
+    }
+
+    /// <summary>
+    /// DB に存在するモジュールについて、対応する Git ファイルが無ければ新規候補（IsNewCandidate=true）にする。
+    /// 対象タイプのサブフォルダ自体が無い場合は何もしない（誤って全件「新規」にしないため）。
+    /// </summary>
+    internal void MarkNewCandidates(string gitRepoPath, string folderName, string fileNamePrefix, List<ModuleInfo> existing)
+    {
+        if (string.IsNullOrEmpty(gitRepoPath) || existing.Count == 0) return;
+
+        var dir = Path.Combine(gitRepoPath, folderName);
+        if (!Directory.Exists(dir)) return;
+
+        try
+        {
+            foreach (var m in existing)
+            {
+                var path = Path.Combine(dir, $"{fileNamePrefix}{m.Name}.sql");
+                if (!File.Exists(path))
+                    m.IsNewCandidate = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "New candidate detection failed for folder={Folder}", folderName);
+        }
+    }
+
+    /// <summary>
+    /// MariaDB Stored フォルダ（PROCEDURE / FUNCTION 混在）向けの新規候補判定。
+    /// ファイル内容の種別判定は不要（DB 側で種別は確定済み）。存在有無のみ見る。
+    /// </summary>
+    internal void MarkMariaDbStoredNewCandidates(
+        string gitRepoPath, List<ModuleInfo> existingStored, List<ModuleInfo> existingFunctions)
+    {
+        if (string.IsNullOrEmpty(gitRepoPath)) return;
+
+        var dir = Path.Combine(gitRepoPath, "Stored");
+        if (!Directory.Exists(dir)) return;
+
+        try
+        {
+            foreach (var m in existingStored.Concat(existingFunctions))
+            {
+                var path = Path.Combine(dir, $"{m.Name}.sql");
+                if (!File.Exists(path))
+                    m.IsNewCandidate = true;
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "MariaDB Stored new candidate detection failed");
+        }
     }
 
     /// <summary>

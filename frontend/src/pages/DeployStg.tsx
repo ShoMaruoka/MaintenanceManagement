@@ -5,6 +5,7 @@ import LogViewer from '../components/LogViewer'
 import SelectionSummary from '../components/SelectionSummary'
 import { getDbList, getModules } from '../api/modules'
 import type { DbListItem } from '../api/modules'
+import { resolveOpType } from '../lib/opType'
 
 type Engine = 'sqlserver' | 'mariadb'
 
@@ -28,9 +29,11 @@ const MODULE_TYPE_LABELS: Partial<Record<ModuleType, string>> = {
 
 const GIT_ONLY_TYPES: ModuleType[] = ['Table', 'UserDefinedTableType', 'MariaDbTable']
 
-// ユーザーが操作区分ドロップダウンで選べる値。
-// 「削除」は削除候補モジュール（別ルート）で自動設定されるため、選択肢からは除外する。
-const SELECTABLE_OP_TYPES: OpType[] = ['更新', '新規']
+function opBadgeClass(op: OpType): string {
+  if (op === '削除') return 'op-badge op-badge-delete op-badge-fixed'
+  if (op === '新規') return 'op-badge op-badge-new op-badge-fixed'
+  return 'op-badge op-badge-update op-badge-fixed'
+}
 
 type PageState = 'select' | 'confirm' | 'log' | 'done'
 
@@ -100,25 +103,14 @@ export default function DeployStg() {
   function toggleModule(module: Module) {
     updateDbSelection(selectedDb, m => {
       if (m.has(module.name)) m.delete(module.name)
-      else m.set(module.name, module.isDeleteCandidate ? '削除' : '更新')
-      return m
-    })
-  }
-
-  function setOpType(name: string, op: OpType) {
-    updateDbSelection(selectedDb, m => { m.set(name, op); return m })
-  }
-
-  function setOpTypeBulk(modules: Module[], op: OpType) {
-    updateDbSelection(selectedDb, m => {
-      modules.forEach(mod => { if (m.has(mod.name)) m.set(mod.name, mod.isDeleteCandidate ? '削除' : op) })
+      else m.set(module.name, resolveOpType(module))
       return m
     })
   }
 
   function selectAll() {
     updateDbSelection(selectedDb, m => {
-      filteredModules.forEach(mod => { if (!m.has(mod.name)) m.set(mod.name, mod.isDeleteCandidate ? '削除' : '更新') })
+      filteredModules.forEach(mod => { if (!m.has(mod.name)) m.set(mod.name, resolveOpType(mod)) })
       return m
     })
   }
@@ -299,25 +291,6 @@ export default function DeployStg() {
                   onChange={e => setSearch(e.target.value)}
                 />
               </div>
-              {selectedInCurrentType.length > 0 && (
-                <span style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: '#5a6472' }}>
-                  操作区分を一括変更
-                  <select
-                    value=""
-                    onChange={e => {
-                      const op = e.target.value as OpType
-                      if (!op) return
-                      setOpTypeBulk(selectedInCurrentType, op)
-                    }}
-                    style={{ fontSize: 12, padding: '2px 4px' }}
-                  >
-                    <option value="" disabled>選択...</option>
-                    {SELECTABLE_OP_TYPES.map(op => (
-                      <option key={op} value={op}>{op}</option>
-                    ))}
-                  </select>
-                </span>
-              )}
               <span className="select-all-btn" onClick={selectAll}>すべて選択</span>
             </div>
 
@@ -333,7 +306,7 @@ export default function DeployStg() {
               )}
               {!loading && !error && filteredModules.map(module => {
                 const isSelected = selectedModules.has(module.name)
-                const opType = selectedModules.get(module.name) ?? '更新'
+                const opType = resolveOpType(module)
                 return (
                   <div
                     key={module.name}
@@ -360,22 +333,7 @@ export default function DeployStg() {
                       </div>
                     </div>
                     {isSelected ? (
-                      module.isDeleteCandidate ? (
-                        <span className="op-badge op-badge-delete op-badge-fixed">削除</span>
-                      ) : (
-                        <div onClick={e => e.stopPropagation()}>
-                          <select
-                            value={opType}
-                            onChange={e => setOpType(module.name, e.target.value as OpType)}
-                            className={`op-badge op-badge-${opType === '更新' ? 'update' : opType === '新規' ? 'new' : 'delete'}`}
-                            style={{ border: 'none', outline: 'none', appearance: 'none', cursor: 'pointer', paddingRight: 14 }}
-                          >
-                            {SELECTABLE_OP_TYPES.map(op => (
-                              <option key={op} value={op}>{op}</option>
-                            ))}
-                          </select>
-                        </div>
-                      )
+                      <span className={opBadgeClass(opType)}>{opType}</span>
                     ) : (
                       <span className="module-item-unselected">未選択</span>
                     )}

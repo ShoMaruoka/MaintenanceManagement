@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "D:\\Git\\MaintenanceManagement\\backend\\Tests\\MaintenanceManagement.Api.Tests.csproj": {}
+    "c:\\Users\\y.sasaki\\orca\\workspaces\\MaintenanceManagement\\chinook\\backend\\Tests\\MaintenanceManagement.Api.Tests.csproj": {}
   },
   "projects": {
-    "D:\\Git\\MaintenanceManagement\\backend\\MaintenanceManagement.Api.csproj": {
-      "version": "1.2.0",
+    "c:\\Users\\y.sasaki\\orca\\workspaces\\MaintenanceManagement\\chinook\\backend\\MaintenanceManagement.Api.csproj": {
+      "version": "1.2.1",
       "restore": {
-        "projectUniqueName": "D:\\Git\\MaintenanceManagement\\backend\\MaintenanceManagement.Api.csproj",
+        "projectUniqueName": "c:\\Users\\y.sasaki\\orca\\workspaces\\MaintenanceManagement\\chinook\\backend\\MaintenanceManagement.Api.csproj",
         "projectName": "MaintenanceManagement.Api",
-        "projectPath": "D:\\Git\\MaintenanceManagement\\backend\\MaintenanceManagement.Api.csproj",
-        "packagesPath": "C:\\Users\\y.sasaki\\.nuget\\packages\\",
-        "outputPath": "D:\\Git\\MaintenanceManagement\\backend\\obj\\",
+        "projectPath": "c:\\Users\\y.sasaki\\orca\\workspaces\\MaintenanceManagement\\chinook\\backend\\MaintenanceManagement.Api.csproj",
+        "packagesPath": "C:\\Users\\y.sasaki\\AppData\\Local\\Temp\\cursor-sandbox-cache\\8d73d860ab4d711a5a024479f9430fdb\\nuget",
+        "outputPath": "c:\\Users\\y.sasaki\\orca\\workspaces\\MaintenanceManagement\\chinook\\backend\\obj\\",
         "projectStyle": "PackageReference",
         "fallbackFolders": [
           "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
@@ -86,14 +86,14 @@
         }
       }
     },
-    "D:\\Git\\MaintenanceManagement\\backend\\Tests\\MaintenanceManagement.Api.Tests.csproj": {
+    "c:\\Users\\y.sasaki\\orca\\workspaces\\MaintenanceManagement\\chinook\\backend\\Tests\\MaintenanceManagement.Api.Tests.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "D:\\Git\\MaintenanceManagement\\backend\\Tests\\MaintenanceManagement.Api.Tests.csproj",
+        "projectUniqueName": "c:\\Users\\y.sasaki\\orca\\workspaces\\MaintenanceManagement\\chinook\\backend\\Tests\\MaintenanceManagement.Api.Tests.csproj",
         "projectName": "MaintenanceManagement.Api.Tests",
-        "projectPath": "D:\\Git\\MaintenanceManagement\\backend\\Tests\\MaintenanceManagement.Api.Tests.csproj",
-        "packagesPath": "C:\\Users\\y.sasaki\\.nuget\\packages\\",
-        "outputPath": "D:\\Git\\MaintenanceManagement\\backend\\Tests\\obj\\",
+        "projectPath": "c:\\Users\\y.sasaki\\orca\\workspaces\\MaintenanceManagement\\chinook\\backend\\Tests\\MaintenanceManagement.Api.Tests.csproj",
+        "packagesPath": "C:\\Users\\y.sasaki\\AppData\\Local\\Temp\\cursor-sandbox-cache\\8d73d860ab4d711a5a024479f9430fdb\\nuget",
+        "outputPath": "c:\\Users\\y.sasaki\\orca\\workspaces\\MaintenanceManagement\\chinook\\backend\\Tests\\obj\\",
         "projectStyle": "PackageReference",
         "fallbackFolders": [
           "C:\\Program Files (x86)\\Microsoft Visual Studio\\Shared\\NuGetPackages"
@@ -114,8 +114,8 @@
           "net8.0": {
             "targetAlias": "net8.0",
             "projectReferences": {
-              "D:\\Git\\MaintenanceManagement\\backend\\MaintenanceManagement.Api.csproj": {
-                "projectPath": "D:\\Git\\MaintenanceManagement\\backend\\MaintenanceManagement.Api.csproj"
+              "c:\\Users\\y.sasaki\\orca\\workspaces\\MaintenanceManagement\\chinook\\backend\\MaintenanceManagement.Api.csproj": {
+                "projectPath": "c:\\Users\\y.sasaki\\orca\\workspaces\\MaintenanceManagement\\chinook\\backend\\MaintenanceManagement.Api.csproj"
               }
             }
           }
