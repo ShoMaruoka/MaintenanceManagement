@@ -143,6 +143,27 @@ function countFiles(entries: ApiImageTreeEntry[]): number {
   return n
 }
 
+/** ツリー上に存在する relativePath を収集する（選択状態の間引き用）。 */
+function collectTreePaths(categories: ApiImageCategoryNode[]): Set<string> {
+  const paths = new Set<string>()
+  function walk(entries: ApiImageTreeEntry[]) {
+    for (const e of entries) {
+      paths.add(e.relativePath)
+      if (e.isDirectory) walk(e.children)
+    }
+  }
+  for (const c of categories) walk(c.entries)
+  return paths
+}
+
+function pruneSelection(prev: Set<string>, valid: Set<string>): Set<string> {
+  const next = new Set<string>()
+  for (const p of prev) {
+    if (valid.has(p)) next.add(p)
+  }
+  return next
+}
+
 function buildConfirmMessage(paths: string[]): string {
   const previewLimit = 8
   const preview = paths.slice(0, previewLimit).join('\n')
@@ -172,6 +193,8 @@ export default function ImagePrepare() {
     try {
       const tree = await getImageTree(db)
       setCategories(tree.categories)
+      const valid = collectTreePaths(tree.categories)
+      setSelectedPaths(prev => pruneSelection(prev, valid))
     } catch (err) {
       setCategories([])
       setError((err as Error).message)
@@ -247,6 +270,7 @@ export default function ImagePrepare() {
     const note = result.dryRun ? '（DryRun: 実書き込みなし）' : ''
     setMessage(`${result.saved.length} 件アップロードしました ${note}`)
     setSelectedFiles([])
+    setSelectedPaths(new Set())
     if (fileInputRef.current) fileInputRef.current.value = ''
     await reloadTree(selectedDb)
   }

@@ -188,6 +188,7 @@ public class ImagePrepareService
     /// Files 配下のファイル／空フォルダを削除する。
     /// 検証失敗時は一切削除せず <see cref="ArgumentException"/>。
     /// 検証後の途中 IO 失敗時は <see cref="ImagePreparePartialDeleteException"/>。
+    /// フォルダは検証時点で実ディスク上空であることのみ許可する（同一リクエスト内の子列挙では非空を許さない）。
     /// </summary>
     public ImageDeleteResponse Delete(DbConfig config, IReadOnlyList<string> paths)
     {
@@ -200,7 +201,12 @@ public class ImagePrepareService
         foreach (var raw in paths)
         {
             if (!TryResolveRelativeEntry(config, raw, out var fullPath, out var normalized, out var error))
+            {
+                // カテゴリルート等は削除文脈の文言へ寄せる
+                if (IsCategoryRootRelative(raw))
+                    throw new ArgumentException("カテゴリルートは削除できません");
                 throw new ArgumentException(error);
+            }
 
             if (!seen.Add(normalized))
                 continue;
@@ -211,6 +217,8 @@ public class ImagePrepareService
             }
             else if (Directory.Exists(fullPath))
             {
+                if (Directory.EnumerateFileSystemEntries(fullPath).Any())
+                    throw new ArgumentException($"空でないフォルダは削除できません: {normalized}");
                 planned.Add((normalized, fullPath, true));
             }
             else
@@ -222,39 +230,13 @@ public class ImagePrepareService
         if (planned.Count == 0)
             throw new ArgumentException("削除するパスを指定してください");
 
-        var plannedSet = new HashSet<string>(
-            planned.Select(p => p.Relative),
-            StringComparer.OrdinalIgnoreCase);
-
-        var filesRoot = Path.GetFullPath(config.FilesPath);
-        foreach (var item in planned.Where(p => p.IsDirectory))
-        {
-            foreach (var entry in Directory.EnumerateFileSystemEntries(item.FullPath))
-            {
-                var childRelative = Path.GetRelativePath(filesRoot, Path.GetFullPath(entry)).Replace('\\', '/');
-                if (!plannedSet.Contains(childRelative))
-                    throw new ArgumentException($"空でないフォルダは削除できません: {item.Relative}");
-            }
-        }
-
-        // 深いパス優先（親子同時指定時に子→親の順で消せる）
-        planned.Sort((a, b) =>
-        {
-            var depthA = a.Relative.Count(c => c == '/');
-            var depthB = b.Relative.Count(c => c == '/');
-            var cmp = depthB.CompareTo(depthA);
-            return cmp != 0 ? cmp : StringComparer.OrdinalIgnoreCase.Compare(a.Relative, b.Relative);
-        });
-
-        var deletedRelatives = planned.Select(p => p.Relative).ToList();
-
         if (_dryRun)
         {
             return new ImageDeleteResponse
             {
                 DbName = config.Name,
                 DryRun = true,
-                Deleted = deletedRelatives,
+                Deleted = planned.Select(p => p.Relative).ToList(),
             };
         }
 
@@ -272,7 +254,10 @@ public class ImagePrepareService
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DirectoryNotFoundException or FileNotFoundException)
         {
-            throw new ImagePreparePartialDeleteException(ex.Message, deleted, ex);
+            throw new ImagePreparePartialDeleteException(
+                "削除中にエラーが発生しました",
+                deleted,
+                ex);
         }
 
         return new ImageDeleteResponse
@@ -281,6 +266,20 @@ public class ImagePrepareService
             DryRun = false,
             Deleted = deleted,
         };
+    }
+
+    private static bool IsCategoryRootRelative(string? relativePath)
+    {
+        if (string.IsNullOrWhiteSpace(relativePath))
+            return false;
+        var normalized = relativePath.Trim().Replace('\\', '/');
+        if (normalized.Contains("..", StringComparison.Ordinal)
+            || Path.IsPathRooted(relativePath)
+            || normalized.StartsWith('/')
+            || normalized.Contains(':'))
+            return false;
+        var segments = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return segments.Length == 1 && AllowedCategorySet.Contains(segments[0]);
     }
 
     /// <summary>
@@ -328,7 +327,8 @@ public class ImagePrepareService
 
     /// <summary>
     /// Files ルートからの相対パスを絶対パスに解決する（ファイル／フォルダ両対応）。
-    /// カテゴリルート単独（セグメント1つ）は拒否。正規化済み相対パス（/ 区切り）も返す。
+    /// カテゴリルート単独（セグメント1つ）は拒否。深さ制限は設けない（作成／アップロード側のみ制限）。
+    /// 正規化済み相対パス（/ 区切り）も返す。
     /// </summary>
     public bool TryResolveRelativeEntry(
         DbConfig config,
@@ -360,20 +360,13 @@ public class ImagePrepareService
         var segments = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (segments.Length < 2)
         {
-            error = "カテゴリルートは削除できません。相対パスは カテゴリ/名前 以上である必要があります";
+            error = "相対パスは カテゴリ/名前 以上である必要があります";
             return false;
         }
 
         var category = segments[0];
         if (!TryValidateCategory(category, out error))
             return false;
-
-        var folderDepth = segments.Length - 2;
-        if (folderDepth > MaxSubfolderDepth)
-        {
-            error = $"サブフォルダは最大 {MaxSubfolderDepth} 階層までです";
-            return false;
-        }
 
         for (var i = 1; i < segments.Length; i++)
         {

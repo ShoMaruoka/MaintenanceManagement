@@ -26,17 +26,17 @@
    - 現行 `TryResolveRelativeFile` は「末尾＝ファイル」前提で、空フォルダパス（例: `Images/flash/img`）にはそのまま使えない
    - 新規に `TryResolveRelativeEntry`（仮名）を追加し、相対パスを `Files` 配下の絶対パスに解決する
    - セグメント数: 最低 2（カテゴリ + 名前）。カテゴリルート単独（`Images` 等）は拒否
-   - サブフォルダ深度は既存どおり最大 2（`カテゴリ/sub1/sub2` まで。ファイルなら `カテゴリ/sub1/sub2/file.ext` でセグメント最大 4）
-   - 既存 `TryResolveRelativeFile` は本番前準備など他呼び出しがあるため **破壊的変更を避ける**（削除専用の解決を追加、または内部共通化して既存を薄いラッパに）
+   - サブフォルダ深度の制限は **作成／アップロード専用**（`TryNormalizeSubPath`）。共有リゾルバ（`TryResolveRelativeEntry`／`TryResolveRelativeFile`）には深さ制限を設けない（レガシー深いパスの削除・本番前準備での解決のため）
+   - 既存 `TryResolveRelativeFile` は公開シグネチャを維持し、内部はエントリ解決と共通化
 
 3. **削除アルゴリズム（1 リクエスト）**
    1. `paths` が空 → 400
    2. 各 path を正規化・解決・種別判定（File / Directory / Missing）
-   3. Directory かつ非空 → 400（全体拒否、何も消さない）
+   3. Directory かつ非空（`EnumerateFileSystemEntries` が1件以上）→ 400（全体拒否、何も消さない）。**同一リクエストに子が含まれていても非空は拒否**（再帰削除しない）
    4. カテゴリルート・不正パス・存在しない → 400（全体拒否）
    5. 重複 path は正規化後にユニーク化（大文字小文字無視）
-   6. 検証 OK 後、DryRun でなければ削除実行（ファイル: `File.Delete`、空フォルダ: `Directory.Delete`）
-   7. 途中の IO 失敗 → それまでに消えたパスを `deleted` に入れ、**500** + `{ error, deleted }`
+   6. 検証 OK 後、DryRun でなければ削除実行（ファイル: `File.Delete`、空フォルダ: `Directory.Delete`）。深さソートは行わない
+   7. 途中の IO 失敗 → それまでに消えたパスを `deleted` に入れ、**500** + `{ error, deleted }`（クライアント向け error は汎用文言、詳細はサーバーログ）
 
 4. **空フォルダの定義**
    - `Directory.EnumerateFileSystemEntries(dir)` が 0 件
@@ -48,14 +48,15 @@
    - カテゴリヘッダは選択不可
    - 「選択削除」ボタン＋ `window.confirm`（パス一覧、多いときは先頭数件＋件数）
    - 成功／失敗後とも `reloadTree`（SPEC: 成功後必須。失敗時も表示ずれ防止で再読込）
+   - `reloadTree` 完了時に新ツリーに存在しないパスを選択から間引く。アップロード成功時は選択をクリア
 
 6. **テスト**
-   - Backend: 一時ディレクトリ＋ `DbConfig.FilesPath` 相当を指すフィクスチャで `ImagePrepareService.Delete` を単体テスト
+   - Backend: 一時ディレクトリ＋ `DbConfig.FilesPath` 相当を指すフィクスチャで `ImagePrepareService.Delete` を単体テスト（非空＋子同時指定拒否、深いパス、PartialDelete 含む）
    - Frontend: 自動テストなし（手動確認チェックリストを Checkpoint に記載）
 
 7. **変更しないもの**
-   - `PrepareController` / `FastCopyService` / 本番前準備 UI
-   - カテゴリホワイトリスト・拡張子制限・MaxUploadBytes
+   - `PrepareController` / 本番前準備 UI（`FastCopyService` は共有リゾルバ経由で深いパス解決が改善されるのみ）
+   - カテゴリホワイトリスト・拡張子制限・MaxUploadBytes・作成時の深さ制限
    - 認証モデル
 
 ## Component Map
@@ -75,7 +76,8 @@
 |--------|------|------|
 | `TryResolveRelativeFile` を共用変更して Prepare 側が壊れる | 本番前準備の画像移動が失敗 | 削除用解決を追加するか、共通化後に既存呼び出しの回帰を `dotnet test` で確認 |
 | UI の「空」と実ディスクの「空」がずれる（他プロセスが書き込み） | チェックできたが API 400 | エラーメッセージをそのまま表示し、ツリー再読込 |
-| 親フォルダと子を同時選択 | 子削除後に親が空になり消せる／順序問題 | 検証時点で両方存在すれば OK。削除は **深いパス優先**（パスセグメント数の降順）で実行し、親を後から消せるようにする |
+| 親フォルダと子を同時指定 | API 直叩きで再帰削除相当になり得る | フォルダは実ディスク上空のみ許可。親子同時は 400。UI は非空を選択不可 |
+| ツリーと選択の乖離 | 存在しないパスでバッチ全体が 400 | `reloadTree` で選択を間引き。アップロード後は選択クリア |
 | 部分成功のクライアント表示 | 消えた／残ったが不明 | 500 時も `deleted` をパースできればメッセージに含め、必ず `reloadTree` |
 
 ## Implementation Order（フェーズ）
@@ -84,7 +86,7 @@
 
 - DTO 追加
 - パス解決（エントリ用）＋ `Delete` メソッド
-- 単体テスト（ファイル削除、空フォルダ、非空拒否、ルート拒否、トラバーサル拒否、DryRun、深いパス優先）
+- 単体テスト（ファイル削除、空フォルダ、非空拒否、子込み親拒否、ルート拒否、トラバーサル拒否、DryRun、深いパス、PartialDelete）
 - Controller エンドポイント
 
 **Checkpoint A:** `dotnet test` 緑。API を直接叩いてファイル／空フォルダが消えること。

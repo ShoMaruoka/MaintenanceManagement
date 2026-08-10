@@ -77,19 +77,14 @@ async function readApiError(response: Response): Promise<string> {
   return `API Error: ${response.status} ${response.statusText}`
 }
 
-async function readPartialDeleteError(response: Response): Promise<ImagePreparePartialDeleteError> {
-  try {
-    const body = await response.json() as { error?: string; deleted?: string[] }
-    return new ImagePreparePartialDeleteError(
-      body.error ?? `API Error: ${response.status} ${response.statusText}`,
-      body.deleted ?? [],
-    )
-  } catch {
-    return new ImagePreparePartialDeleteError(
-      `API Error: ${response.status} ${response.statusText}`,
-      [],
-    )
-  }
+async function readPartialDeleteError(
+  response: Response,
+  body: { error?: string; deleted?: string[] },
+): Promise<ImagePreparePartialDeleteError> {
+  return new ImagePreparePartialDeleteError(
+    body.error ?? `API Error: ${response.status} ${response.statusText}`,
+    body.deleted ?? [],
+  )
 }
 
 export async function getImageTree(dbName: DbName): Promise<ApiImagePrepareTree> {
@@ -154,11 +149,25 @@ export async function deleteImageEntries(
     body: JSON.stringify({ paths }),
   })
 
-  if (response.status === 500) {
-    throw await readPartialDeleteError(response)
+  if (!response.ok) {
+    let body: { error?: string; deleted?: string[]; conflicts?: string[] } | null = null
+    try {
+      body = await response.json() as { error?: string; deleted?: string[]; conflicts?: string[] }
+    } catch {
+      // ignore — fall through to generic error
+    }
+
+    if (response.status === 500 && body && Array.isArray(body.deleted)) {
+      throw await readPartialDeleteError(response, body)
+    }
+
+    if (body?.error && body.conflicts?.length) {
+      throw new Error(`${body.error}: ${body.conflicts.join(', ')}`)
+    }
+    if (body?.error) throw new Error(body.error)
+    throw new Error(`API Error: ${response.status} ${response.statusText}`)
   }
 
-  if (!response.ok) throw new Error(await readApiError(response))
   return response.json() as Promise<ApiImageDeleteResponse>
 }
 

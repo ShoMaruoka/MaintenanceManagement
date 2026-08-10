@@ -94,6 +94,23 @@ public class ImagePrepareServiceDeleteTests : IDisposable
     }
 
     [Fact]
+    public void Delete_RejectsParentWithChildEvenWhenChildAlsoListed()
+    {
+        var dir = FilesPath("Images", "junk");
+        Directory.CreateDirectory(dir);
+        var child = Path.Combine(dir, "a.png");
+        File.WriteAllText(child, "x");
+        var service = CreateService(dryRun: false);
+
+        var ex = Assert.Throws<ArgumentException>(() =>
+            service.Delete(_config, ["Images/junk", "Images/junk/a.png"]));
+
+        Assert.Contains("空でない", ex.Message);
+        Assert.True(Directory.Exists(dir));
+        Assert.True(File.Exists(child));
+    }
+
+    [Fact]
     public void Delete_RejectsCategoryRoot()
     {
         var service = CreateService(dryRun: false);
@@ -142,20 +159,50 @@ public class ImagePrepareServiceDeleteTests : IDisposable
     }
 
     [Fact]
-    public void Delete_ParentAndChild_DeletesBoth_DeepestFirst()
+    public void Delete_ParentAndChildTogether_Rejected_ThenSequentialDeleteWorks()
     {
         var parent = FilesPath("Images", "flash");
         var child = FilesPath("Images", "flash", "img");
         Directory.CreateDirectory(child);
         var service = CreateService(dryRun: false);
 
-        var result = service.Delete(_config, ["Images/flash", "Images/flash/img"]);
+        Assert.Throws<ArgumentException>(() =>
+            service.Delete(_config, ["Images/flash", "Images/flash/img"]));
+        Assert.True(Directory.Exists(child));
 
-        Assert.Equal(2, result.Deleted.Count);
-        Assert.Equal("Images/flash/img", result.Deleted[0]);
-        Assert.Equal("Images/flash", result.Deleted[1]);
+        var childResult = service.Delete(_config, ["Images/flash/img"]);
+        Assert.Equal(["Images/flash/img"], childResult.Deleted);
+
+        var parentResult = service.Delete(_config, ["Images/flash"]);
+        Assert.Equal(["Images/flash"], parentResult.Deleted);
         Assert.False(Directory.Exists(parent));
-        Assert.False(Directory.Exists(child));
+    }
+
+    [Fact]
+    public void Delete_RemovesDeepLegacyFile()
+    {
+        var deep = FilesPath("Images", "a", "b", "c", "old.png");
+        Directory.CreateDirectory(Path.GetDirectoryName(deep)!);
+        File.WriteAllText(deep, "x");
+        var service = CreateService(dryRun: false);
+
+        var result = service.Delete(_config, ["Images/a/b/c/old.png"]);
+
+        Assert.Equal(["Images/a/b/c/old.png"], result.Deleted);
+        Assert.False(File.Exists(deep));
+    }
+
+    [Fact]
+    public void TryResolveRelativeFile_AllowsDeepLegacyPath()
+    {
+        var deep = FilesPath("Images", "a", "b", "c", "old.png");
+        Directory.CreateDirectory(Path.GetDirectoryName(deep)!);
+        File.WriteAllText(deep, "x");
+        var service = CreateService(dryRun: true);
+
+        Assert.True(service.TryResolveRelativeFile(_config, "Images/a/b/c/old.png", out var full, out var error));
+        Assert.Equal(Path.GetFullPath(deep), Path.GetFullPath(full));
+        Assert.Equal("", error);
     }
 
     [Fact]
@@ -176,5 +223,25 @@ public class ImagePrepareServiceDeleteTests : IDisposable
     {
         var service = CreateService(dryRun: false);
         Assert.Throws<ArgumentException>(() => service.Delete(_config, []));
+    }
+
+    [Fact]
+    public void Delete_PartialFailure_ReportsDeletedPaths()
+    {
+        var first = FilesPath("Images", "ok.png");
+        var second = FilesPath("Images", "locked.png");
+        File.WriteAllText(first, "x");
+        File.WriteAllText(second, "y");
+        var service = CreateService(dryRun: false);
+
+        using var lockStream = new FileStream(second, FileMode.Open, FileAccess.Read, FileShare.None);
+        var ex = Assert.Throws<ImagePreparePartialDeleteException>(() =>
+            service.Delete(_config, ["Images/ok.png", "Images/locked.png"]));
+
+        Assert.Equal(["Images/ok.png"], ex.Deleted.ToList());
+        Assert.Equal("削除中にエラーが発生しました", ex.Message);
+        Assert.NotNull(ex.InnerException);
+        Assert.False(File.Exists(first));
+        Assert.True(File.Exists(second));
     }
 }

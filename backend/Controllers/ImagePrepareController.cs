@@ -10,11 +10,16 @@ public class ImagePrepareController : ControllerBase
 {
     private readonly ImagePrepareService _service;
     private readonly List<DbConfig> _dbConfigs;
+    private readonly ILogger<ImagePrepareController> _logger;
 
-    public ImagePrepareController(ImagePrepareService service, IConfiguration config)
+    public ImagePrepareController(
+        ImagePrepareService service,
+        IConfiguration config,
+        ILogger<ImagePrepareController> logger)
     {
         _service = service;
         _dbConfigs = config.GetSection("DbConfigs").Get<List<DbConfig>>() ?? [];
+        _logger = logger;
     }
 
     [HttpGet("{dbName}/tree")]
@@ -92,9 +97,14 @@ public class ImagePrepareController : ControllerBase
         }
         catch (ImagePreparePartialDeleteException ex)
         {
+            _logger.LogError(
+                ex,
+                "Image prepare delete partially failed for DB {DbName}. Deleted={Deleted}",
+                dbName,
+                string.Join(", ", ex.Deleted));
             return StatusCode(StatusCodes.Status500InternalServerError, new
             {
-                error = ex.Message,
+                error = "削除中にエラーが発生しました",
                 deleted = ex.Deleted,
             });
         }
