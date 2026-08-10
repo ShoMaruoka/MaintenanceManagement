@@ -32,7 +32,7 @@ type TreeNodeProps = {
 
 function TreeNode({ entry, depth, selected, onToggle, disabled }: TreeNodeProps) {
   const [open, setOpen] = useState(depth < 1)
-  const canSelect = !entry.isDirectory || entry.children.length === 0
+  const selectable = canSelectEntry(entry)
   const checked = selected.has(entry.relativePath)
 
   if (!entry.isDirectory) {
@@ -55,7 +55,7 @@ function TreeNode({ entry, depth, selected, onToggle, disabled }: TreeNodeProps)
   return (
     <div>
       <div className="imgprep-tree-row imgprep-tree-folder-row" style={{ paddingLeft: 12 + depth * 16 }}>
-        {canSelect ? (
+        {selectable ? (
           <input
             type="checkbox"
             className="imgprep-tree-check"
@@ -143,12 +143,17 @@ function countFiles(entries: ApiImageTreeEntry[]): number {
   return n
 }
 
-/** ツリー上に存在する relativePath を収集する（選択状態の間引き用）。 */
-function collectTreePaths(categories: ApiImageCategoryNode[]): Set<string> {
+/** ファイル、または空フォルダのみ選択可（UI と間引きで共有）。 */
+function canSelectEntry(entry: ApiImageTreeEntry): boolean {
+  return !entry.isDirectory || entry.children.length === 0
+}
+
+/** ツリー上の選択可能な relativePath を収集する（選択状態の間引き用）。 */
+function collectSelectableTreePaths(categories: ApiImageCategoryNode[]): Set<string> {
   const paths = new Set<string>()
   function walk(entries: ApiImageTreeEntry[]) {
     for (const e of entries) {
-      paths.add(e.relativePath)
+      if (canSelectEntry(e)) paths.add(e.relativePath)
       if (e.isDirectory) walk(e.children)
     }
   }
@@ -193,7 +198,7 @@ export default function ImagePrepare() {
     try {
       const tree = await getImageTree(db)
       setCategories(tree.categories)
-      const valid = collectTreePaths(tree.categories)
+      const valid = collectSelectableTreePaths(tree.categories)
       setSelectedPaths(prev => pruneSelection(prev, valid))
     } catch (err) {
       setCategories([])
@@ -270,7 +275,6 @@ export default function ImagePrepare() {
     const note = result.dryRun ? '（DryRun: 実書き込みなし）' : ''
     setMessage(`${result.saved.length} 件アップロードしました ${note}`)
     setSelectedFiles([])
-    setSelectedPaths(new Set())
     if (fileInputRef.current) fileInputRef.current.value = ''
     await reloadTree(selectedDb)
   }

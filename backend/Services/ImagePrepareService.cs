@@ -200,30 +200,40 @@ public class ImagePrepareService
 
         foreach (var raw in paths)
         {
-            if (!TryResolveRelativeEntry(config, raw, out var fullPath, out var normalized, out var error))
+            try
             {
-                // カテゴリルート等は削除文脈の文言へ寄せる
-                if (IsCategoryRootRelative(raw))
-                    throw new ArgumentException("カテゴリルートは削除できません");
-                throw new ArgumentException(error);
-            }
+                if (!TryResolveRelativeEntry(config, raw, out var fullPath, out var normalized, out var error))
+                {
+                    if (TryParseRelativePathSegments(raw, out var segments, out _)
+                        && segments.Length == 1
+                        && AllowedCategorySet.Contains(segments[0]))
+                    {
+                        throw new ArgumentException("カテゴリルートは削除できません");
+                    }
+                    throw new ArgumentException(error);
+                }
 
-            if (!seen.Add(normalized))
-                continue;
+                if (!seen.Add(normalized))
+                    continue;
 
-            if (File.Exists(fullPath))
-            {
-                planned.Add((normalized, fullPath, false));
+                if (File.Exists(fullPath))
+                {
+                    planned.Add((normalized, fullPath, false));
+                }
+                else if (Directory.Exists(fullPath))
+                {
+                    if (Directory.EnumerateFileSystemEntries(fullPath).Any())
+                        throw new ArgumentException($"空でないフォルダは削除できません: {normalized}");
+                    planned.Add((normalized, fullPath, true));
+                }
+                else
+                {
+                    throw new ArgumentException($"パスが存在しません: {normalized}");
+                }
             }
-            else if (Directory.Exists(fullPath))
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or PathTooLongException)
             {
-                if (Directory.EnumerateFileSystemEntries(fullPath).Any())
-                    throw new ArgumentException($"空でないフォルダは削除できません: {normalized}");
-                planned.Add((normalized, fullPath, true));
-            }
-            else
-            {
-                throw new ArgumentException($"パスが存在しません: {normalized}");
+                throw new ArgumentException($"パスを検証できません: {raw}", ex);
             }
         }
 
@@ -266,20 +276,6 @@ public class ImagePrepareService
             DryRun = false,
             Deleted = deleted,
         };
-    }
-
-    private static bool IsCategoryRootRelative(string? relativePath)
-    {
-        if (string.IsNullOrWhiteSpace(relativePath))
-            return false;
-        var normalized = relativePath.Trim().Replace('\\', '/');
-        if (normalized.Contains("..", StringComparison.Ordinal)
-            || Path.IsPathRooted(relativePath)
-            || normalized.StartsWith('/')
-            || normalized.Contains(':'))
-            return false;
-        var segments = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        return segments.Length == 1 && AllowedCategorySet.Contains(segments[0]);
     }
 
     /// <summary>
@@ -341,23 +337,9 @@ public class ImagePrepareService
         normalizedRelativePath = "";
         error = "";
 
-        if (string.IsNullOrWhiteSpace(relativePath))
-        {
-            error = "相対パスが空です";
+        if (!TryParseRelativePathSegments(relativePath, out var segments, out error))
             return false;
-        }
 
-        var normalized = relativePath.Trim().Replace('\\', '/');
-        if (normalized.Contains("..", StringComparison.Ordinal)
-            || Path.IsPathRooted(relativePath)
-            || normalized.StartsWith('/')
-            || normalized.Contains(':'))
-        {
-            error = "不正な相対パスです";
-            return false;
-        }
-
-        var segments = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         if (segments.Length < 2)
         {
             error = "相対パスは カテゴリ/名前 以上である必要があります";
@@ -390,6 +372,38 @@ public class ImagePrepareService
             out fullPath,
             out error,
             "Files 配下以外のパスは指定できません");
+    }
+
+    /// <summary>
+    /// 相対パスをセグメント列に正規化する（空・トラバーサル等は失敗）。
+    /// セグメント数の下限（カテゴリ/名前）は呼び出し側で判定する。
+    /// </summary>
+    private static bool TryParseRelativePathSegments(
+        string? relativePath,
+        out string[] segments,
+        out string error)
+    {
+        segments = [];
+        error = "";
+
+        if (string.IsNullOrWhiteSpace(relativePath))
+        {
+            error = "相対パスが空です";
+            return false;
+        }
+
+        var normalized = relativePath.Trim().Replace('\\', '/');
+        if (normalized.Contains("..", StringComparison.Ordinal)
+            || Path.IsPathRooted(relativePath)
+            || normalized.StartsWith('/')
+            || normalized.Contains(':'))
+        {
+            error = "不正な相対パスです";
+            return false;
+        }
+
+        segments = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return true;
     }
 
     public static bool TryValidateCategory(string category, out string error)

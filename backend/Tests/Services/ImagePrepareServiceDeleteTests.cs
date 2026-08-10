@@ -244,4 +244,30 @@ public class ImagePrepareServiceDeleteTests : IDisposable
         Assert.False(File.Exists(first));
         Assert.True(File.Exists(second));
     }
+
+    [Fact]
+    public void Delete_RejectsPathTooLong_AsArgumentException()
+    {
+        var service = CreateService(dryRun: false);
+        var tooManySegments = "Images/" + string.Join('/', Enumerable.Repeat("aaaaaaaaaa", 5000));
+
+        var ex = Assert.Throws<ArgumentException>(() =>
+            service.Delete(_config, [tooManySegments]));
+
+        Assert.DoesNotContain(":\\", ex.Message, StringComparison.Ordinal);
+        Assert.DoesNotContain("PathTooLong", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void TryCombineUnderRoot_RejectsPathTooLong_WithoutThrowing()
+    {
+        var root = _config.FilesPath;
+        var segments = new[] { "Images" }.Concat(Enumerable.Repeat("aaaaaaaaaa", 5000));
+
+        var ok = PathSafety.TryCombineUnderRoot(root, segments, out var fullPath, out var error, "Files 配下以外のパスは指定できません");
+
+        Assert.False(ok);
+        Assert.Equal("", fullPath);
+        Assert.False(string.IsNullOrEmpty(error));
+    }
 }

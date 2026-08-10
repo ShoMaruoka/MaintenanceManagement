@@ -65,24 +65,34 @@ export class ImagePreparePartialDeleteError extends Error {
 }
 
 async function readApiError(response: Response): Promise<string> {
+  let body: { error?: string; conflicts?: string[] } | null = null
   try {
-    const body = await response.json() as { error?: string; conflicts?: string[] }
-    if (body.error && body.conflicts?.length) {
-      return `${body.error}: ${body.conflicts.join(', ')}`
-    }
-    if (body.error) return body.error
+    body = await response.json() as { error?: string; conflicts?: string[] }
   } catch {
     // ignore
   }
-  return `API Error: ${response.status} ${response.statusText}`
+  return formatApiErrorBody(response.status, response.statusText, body)
 }
 
-async function readPartialDeleteError(
-  response: Response,
+function formatApiErrorBody(
+  status: number,
+  statusText: string,
+  body: { error?: string; conflicts?: string[] } | null,
+): string {
+  if (body?.error && body.conflicts?.length) {
+    return `${body.error}: ${body.conflicts.join(', ')}`
+  }
+  if (body?.error) return body.error
+  return `API Error: ${status} ${statusText}`
+}
+
+function toPartialDeleteError(
+  status: number,
+  statusText: string,
   body: { error?: string; deleted?: string[] },
-): Promise<ImagePreparePartialDeleteError> {
+): ImagePreparePartialDeleteError {
   return new ImagePreparePartialDeleteError(
-    body.error ?? `API Error: ${response.status} ${response.statusText}`,
+    body.error ?? `API Error: ${status} ${statusText}`,
     body.deleted ?? [],
   )
 }
@@ -158,14 +168,10 @@ export async function deleteImageEntries(
     }
 
     if (response.status === 500 && body && Array.isArray(body.deleted)) {
-      throw await readPartialDeleteError(response, body)
+      throw toPartialDeleteError(response.status, response.statusText, body)
     }
 
-    if (body?.error && body.conflicts?.length) {
-      throw new Error(`${body.error}: ${body.conflicts.join(', ')}`)
-    }
-    if (body?.error) throw new Error(body.error)
-    throw new Error(`API Error: ${response.status} ${response.statusText}`)
+    throw new Error(formatApiErrorBody(response.status, response.statusText, body))
   }
 
   return response.json() as Promise<ApiImageDeleteResponse>
