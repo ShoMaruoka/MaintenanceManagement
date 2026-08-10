@@ -74,6 +74,32 @@ public class ImagePrepareController : ControllerBase
         }
     }
 
+    [HttpPost("{dbName}/delete")]
+    public IActionResult Delete(string dbName, [FromBody] ImageDeleteRequest? request)
+    {
+        var config = FindConfig(dbName);
+        if (config is null)
+            return NotFound(new { error = $"DB '{dbName}' not found" });
+
+        try
+        {
+            var result = _service.Delete(config, request?.Paths ?? []);
+            return Ok(result);
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(new { error = ex.Message });
+        }
+        catch (ImagePreparePartialDeleteException ex)
+        {
+            return StatusCode(StatusCodes.Status500InternalServerError, new
+            {
+                error = ex.Message,
+                deleted = ex.Deleted,
+            });
+        }
+    }
+
     private DbConfig? FindConfig(string dbName) =>
         _dbConfigs.FirstOrDefault(c => c.Name.Equals(dbName, StringComparison.OrdinalIgnoreCase));
 }

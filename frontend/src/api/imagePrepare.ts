@@ -47,6 +47,23 @@ export class ImagePrepareConflictError extends Error {
   }
 }
 
+export interface ApiImageDeleteResponse {
+  dbName: DbName
+  dryRun: boolean
+  deleted: string[]
+}
+
+/** 検証後の途中失敗（HTTP 500 + deleted）。削除済みパスを参照できる。 */
+export class ImagePreparePartialDeleteError extends Error {
+  deleted: string[]
+
+  constructor(message: string, deleted: string[]) {
+    super(message)
+    this.name = 'ImagePreparePartialDeleteError'
+    this.deleted = deleted
+  }
+}
+
 async function readApiError(response: Response): Promise<string> {
   try {
     const body = await response.json() as { error?: string; conflicts?: string[] }
@@ -58,6 +75,21 @@ async function readApiError(response: Response): Promise<string> {
     // ignore
   }
   return `API Error: ${response.status} ${response.statusText}`
+}
+
+async function readPartialDeleteError(response: Response): Promise<ImagePreparePartialDeleteError> {
+  try {
+    const body = await response.json() as { error?: string; deleted?: string[] }
+    return new ImagePreparePartialDeleteError(
+      body.error ?? `API Error: ${response.status} ${response.statusText}`,
+      body.deleted ?? [],
+    )
+  } catch {
+    return new ImagePreparePartialDeleteError(
+      `API Error: ${response.status} ${response.statusText}`,
+      [],
+    )
+  }
 }
 
 export async function getImageTree(dbName: DbName): Promise<ApiImagePrepareTree> {
@@ -110,6 +142,24 @@ export async function uploadImages(
 
   if (!response.ok) throw new Error(await readApiError(response))
   return response.json() as Promise<ApiImageUploadResponse>
+}
+
+export async function deleteImageEntries(
+  dbName: DbName,
+  paths: string[],
+): Promise<ApiImageDeleteResponse> {
+  const response = await fetch(`${API_BASE}/image-prepare/${dbName}/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ paths }),
+  })
+
+  if (response.status === 500) {
+    throw await readPartialDeleteError(response)
+  }
+
+  if (!response.ok) throw new Error(await readApiError(response))
+  return response.json() as Promise<ApiImageDeleteResponse>
 }
 
 /** サブフォルダパスのクライアント側検証。問題なければ null。 */

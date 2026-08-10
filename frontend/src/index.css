@@ -1033,6 +1033,27 @@ input {
   background: #f5f6f7;
 }
 
+.btn-danger {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #fff;
+  padding: 9px 18px;
+  border: none;
+  border-radius: 7px;
+  background: #dc2626;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+
+.btn-danger:hover {
+  background: #b91c1c;
+}
+
+.btn-danger:disabled {
+  background: #fca5a5;
+  cursor: not-allowed;
+}
+
 /* ---- Confirm Dialog ---- */
 .dialog-overlay {
   position: fixed;
@@ -2224,6 +2245,17 @@ input {
   border-bottom: 1px solid #e5e7eb;
 }
 
+.imgprep-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.imgprep-selection-count {
+  font-size: 12px;
+  color: #6b7280;
+}
+
 .imgprep-title {
   display: flex;
   align-items: center;
@@ -2324,6 +2356,47 @@ input {
   font: inherit;
   color: #374151;
   text-align: left;
+}
+
+.imgprep-tree-check {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  margin: 0;
+  cursor: pointer;
+}
+
+.imgprep-tree-check:disabled {
+  cursor: not-allowed;
+}
+
+.imgprep-tree-check-spacer {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+.imgprep-tree-folder-row {
+  gap: 6px;
+}
+
+.imgprep-tree-folder-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.imgprep-tree-folder-btn:hover {
+  color: #111827;
 }
 
 button.imgprep-tree-folder {
