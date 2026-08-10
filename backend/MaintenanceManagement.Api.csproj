@@ -4,9 +4,9 @@
     <TargetFramework>net8.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <!-- リリース版。Git タグ (v1.3.0) と揃えて更新する。frontend/package.json の version とも一致させること。
+    <!-- リリース版。Git タグ (v1.4.0) と揃えて更新する。frontend/package.json の version とも一致させること。
          手順は docs/VERSIONING_GUIDE.md を参照。 -->
-    <Version>1.3.0</Version>
+    <Version>1.4.0</Version>
     <!-- backend/Tests は独立したテストプロジェクト（xUnit）。既定のファイルグロブ（Compile/Content等）
          から丸ごと除外しないと、Web SDK の静的アセット収集が Tests のビルド出力を再帰的に拾ってしまう。 -->
     <DefaultItemExcludes>$(DefaultItemExcludes);Tests/**</DefaultItemExcludes>

@@ -185,6 +185,100 @@ public class ImagePrepareService
     }
 
     /// <summary>
+    /// Files 配下のファイル／空フォルダを削除する。
+    /// 検証失敗時は一切削除せず <see cref="ArgumentException"/>。
+    /// 検証後の途中 IO 失敗時は <see cref="ImagePreparePartialDeleteException"/>。
+    /// フォルダは検証時点で実ディスク上空であることのみ許可する（同一リクエスト内の子列挙では非空を許さない）。
+    /// </summary>
+    public ImageDeleteResponse Delete(DbConfig config, IReadOnlyList<string> paths)
+    {
+        if (paths is null || paths.Count == 0)
+            throw new ArgumentException("削除するパスを指定してください");
+
+        var planned = new List<(string Relative, string FullPath, bool IsDirectory)>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var raw in paths)
+        {
+            try
+            {
+                if (!TryResolveRelativeEntry(config, raw, out var fullPath, out var normalized, out var error))
+                {
+                    if (TryParseRelativePathSegments(raw, out var segments, out _)
+                        && segments.Length == 1
+                        && AllowedCategorySet.Contains(segments[0]))
+                    {
+                        throw new ArgumentException("カテゴリルートは削除できません");
+                    }
+                    throw new ArgumentException(error);
+                }
+
+                if (!seen.Add(normalized))
+                    continue;
+
+                if (File.Exists(fullPath))
+                {
+                    planned.Add((normalized, fullPath, false));
+                }
+                else if (Directory.Exists(fullPath))
+                {
+                    if (Directory.EnumerateFileSystemEntries(fullPath).Any())
+                        throw new ArgumentException($"空でないフォルダは削除できません: {normalized}");
+                    planned.Add((normalized, fullPath, true));
+                }
+                else
+                {
+                    throw new ArgumentException($"パスが存在しません: {normalized}");
+                }
+            }
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or PathTooLongException)
+            {
+                throw new ArgumentException($"パスを検証できません: {raw}", ex);
+            }
+        }
+
+        if (planned.Count == 0)
+            throw new ArgumentException("削除するパスを指定してください");
+
+        if (_dryRun)
+        {
+            return new ImageDeleteResponse
+            {
+                DbName = config.Name,
+                DryRun = true,
+                Deleted = planned.Select(p => p.Relative).ToList(),
+            };
+        }
+
+        var deleted = new List<string>();
+        try
+        {
+            foreach (var item in planned)
+            {
+                if (item.IsDirectory)
+                    Directory.Delete(item.FullPath);
+                else
+                    File.Delete(item.FullPath);
+                deleted.Add(item.Relative);
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or DirectoryNotFoundException or FileNotFoundException)
+        {
+            throw new ImagePreparePartialDeleteException(
+                "削除中にエラーが発生しました",
+                deleted,
+                ex);
+        }
+
+        return new ImageDeleteResponse
+        {
+            DbName = config.Name,
+            DryRun = false,
+            Deleted = deleted,
+        };
+    }
+
+    /// <summary>
     /// カテゴリ＋サブフォルダ（最大 2 階層）を Files 配下の絶対ディレクトリパスに解決する。
     /// </summary>
     public bool TryResolveDirectory(
@@ -216,6 +310,7 @@ public class ImagePrepareService
 
     /// <summary>
     /// Files ルートからの相対パス（例: Images/flash/img/a.png）を絶対パスに解決する。
+    /// 末尾がファイルである前提の呼び出し向け（本番前準備など）。内部はエントリ解決と共通。
     /// </summary>
     public bool TryResolveRelativeFile(
         DbConfig config,
@@ -223,7 +318,72 @@ public class ImagePrepareService
         out string fullFilePath,
         out string error)
     {
-        fullFilePath = "";
+        return TryResolveRelativeEntry(config, relativePath, out fullFilePath, out _, out error);
+    }
+
+    /// <summary>
+    /// Files ルートからの相対パスを絶対パスに解決する（ファイル／フォルダ両対応）。
+    /// カテゴリルート単独（セグメント1つ）は拒否。深さ制限は設けない（作成／アップロード側のみ制限）。
+    /// 正規化済み相対パス（/ 区切り）も返す。
+    /// </summary>
+    public bool TryResolveRelativeEntry(
+        DbConfig config,
+        string relativePath,
+        out string fullPath,
+        out string normalizedRelativePath,
+        out string error)
+    {
+        fullPath = "";
+        normalizedRelativePath = "";
+        error = "";
+
+        if (!TryParseRelativePathSegments(relativePath, out var segments, out error))
+            return false;
+
+        if (segments.Length < 2)
+        {
+            error = "相対パスは カテゴリ/名前 以上である必要があります";
+            return false;
+        }
+
+        var category = segments[0];
+        if (!TryValidateCategory(category, out error))
+            return false;
+
+        for (var i = 1; i < segments.Length; i++)
+        {
+            var seg = segments[i];
+            if (seg is "." or "..")
+            {
+                error = "相対参照 (.. や .) は使用できません";
+                return false;
+            }
+            if (seg.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
+            {
+                error = $"パスに使用できない文字が含まれています: {seg}";
+                return false;
+            }
+        }
+
+        normalizedRelativePath = string.Join('/', segments);
+        return PathSafety.TryCombineUnderRoot(
+            config.FilesPath,
+            segments,
+            out fullPath,
+            out error,
+            "Files 配下以外のパスは指定できません");
+    }
+
+    /// <summary>
+    /// 相対パスをセグメント列に正規化する（空・トラバーサル等は失敗）。
+    /// セグメント数の下限（カテゴリ/名前）は呼び出し側で判定する。
+    /// </summary>
+    private static bool TryParseRelativePathSegments(
+        string? relativePath,
+        out string[] segments,
+        out string error)
+    {
+        segments = [];
         error = "";
 
         if (string.IsNullOrWhiteSpace(relativePath))
@@ -242,45 +402,8 @@ public class ImagePrepareService
             return false;
         }
 
-        var segments = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        if (segments.Length < 2)
-        {
-            error = "相対パスは カテゴリ/ファイル名 以上である必要があります";
-            return false;
-        }
-
-        var category = segments[0];
-        if (!TryValidateCategory(category, out error))
-            return false;
-
-        var folderDepth = segments.Length - 2;
-        if (folderDepth > MaxSubfolderDepth)
-        {
-            error = $"サブフォルダは最大 {MaxSubfolderDepth} 階層までです";
-            return false;
-        }
-
-        for (var i = 1; i < segments.Length; i++)
-        {
-            var seg = segments[i];
-            if (seg is "." or "..")
-            {
-                error = "相対参照 (.. や .) は使用できません";
-                return false;
-            }
-            if (seg.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0)
-            {
-                error = $"パスに使用できない文字が含まれています: {seg}";
-                return false;
-            }
-        }
-
-        return PathSafety.TryCombineUnderRoot(
-            config.FilesPath,
-            segments,
-            out fullFilePath,
-            out error,
-            "Files 配下以外のパスは指定できません");
+        segments = normalized.Split('/', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return true;
     }
 
     public static bool TryValidateCategory(string category, out string error)
@@ -415,5 +538,17 @@ public class ImagePrepareConflictException : Exception
         : base("同名のファイルが既に存在します")
     {
         Conflicts = conflicts;
+    }
+}
+
+/// <summary>削除検証通過後に途中で IO 失敗したときの部分成功。</summary>
+public class ImagePreparePartialDeleteException : Exception
+{
+    public IReadOnlyList<string> Deleted { get; }
+
+    public ImagePreparePartialDeleteException(string message, IReadOnlyList<string> deleted, Exception? inner = null)
+        : base(message, inner)
+    {
+        Deleted = deleted;
     }
 }

@@ -26,6 +26,7 @@ internal static class PathSafety
 
     /// <summary>
     /// root と相対セグメントを結合し、結果が root 配下であれば true。
+    /// Path.GetFullPath が投げうる長すぎるパス等は検証失敗（false）に正規化する。
     /// </summary>
     public static bool TryCombineUnderRoot(
         string rootPath,
@@ -37,8 +38,19 @@ internal static class PathSafety
         fullPath = "";
         error = "";
 
-        var candidate = Path.GetFullPath(Path.Combine(new[] { rootPath }.Concat(relativeSegments).ToArray()));
-        var root = Path.GetFullPath(rootPath);
+        string candidate;
+        string root;
+        try
+        {
+            candidate = Path.GetFullPath(Path.Combine(new[] { rootPath }.Concat(relativeSegments).ToArray()));
+            root = Path.GetFullPath(rootPath);
+        }
+        catch (Exception ex) when (ex is PathTooLongException or NotSupportedException or ArgumentException)
+        {
+            error = "不正な相対パスです";
+            return false;
+        }
+
         if (!IsUnderRoot(root, candidate))
         {
             error = rejectMessage ?? "指定ルート配下以外のパスは指定できません";

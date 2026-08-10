@@ -50,3 +50,18 @@ public class ImageUploadResponse
     public bool DryRun { get; set; }
     public List<ImageUploadSavedFile> Saved { get; set; } = [];
 }
+
+/// <summary>画像情報準備: ファイル／空フォルダの削除リクエスト。</summary>
+public class ImageDeleteRequest
+{
+    /// <summary>Files ルートからの相対パス一覧（/ 区切り）。ファイルまたは空フォルダ。</summary>
+    public List<string> Paths { get; set; } = [];
+}
+
+/// <summary>画像情報準備: 削除結果。</summary>
+public class ImageDeleteResponse
+{
+    public string DbName { get; set; } = "";
+    public bool DryRun { get; set; }
+    public List<string> Deleted { get; set; } = [];
+}

@@ -3,8 +3,10 @@ import type { DbName } from '../types'
 import { getDbList, type DbListItem } from '../api/modules'
 import {
   createImageFolder,
+  deleteImageEntries,
   getImageTree,
   ImagePrepareConflictError,
+  ImagePreparePartialDeleteError,
   uploadImages,
   validateSubPath,
   type ApiImageCategoryNode,
@@ -20,12 +22,30 @@ const FALLBACK_DBS: DbListItem[] = [
 
 const CATEGORIES = ['Images', 'news', 'pdf'] as const
 
-function TreeNode({ entry, depth }: { entry: ApiImageTreeEntry; depth: number }) {
+type TreeNodeProps = {
+  entry: ApiImageTreeEntry
+  depth: number
+  selected: Set<string>
+  onToggle: (path: string, checked: boolean) => void
+  disabled: boolean
+}
+
+function TreeNode({ entry, depth, selected, onToggle, disabled }: TreeNodeProps) {
   const [open, setOpen] = useState(depth < 1)
+  const selectable = canSelectEntry(entry)
+  const checked = selected.has(entry.relativePath)
 
   if (!entry.isDirectory) {
     return (
       <div className="imgprep-tree-row" style={{ paddingLeft: 12 + depth * 16 }}>
+        <input
+          type="checkbox"
+          className="imgprep-tree-check"
+          checked={checked}
+          disabled={disabled}
+          onChange={e => onToggle(entry.relativePath, e.target.checked)}
+          aria-label={`${entry.name} を選択`}
+        />
         <span className="imgprep-tree-icon file" aria-hidden />
         <span className="imgprep-tree-name">{entry.name}</span>
       </div>
@@ -34,24 +54,54 @@ function TreeNode({ entry, depth }: { entry: ApiImageTreeEntry; depth: number })
 
   return (
     <div>
-      <button
-        type="button"
-        className="imgprep-tree-row imgprep-tree-folder"
-        style={{ paddingLeft: 12 + depth * 16 }}
-        onClick={() => setOpen(v => !v)}
-      >
-        <span className={`imgprep-tree-caret${open ? ' open' : ''}`} aria-hidden />
-        <span className="imgprep-tree-icon folder" aria-hidden />
-        <span className="imgprep-tree-name">{entry.name}</span>
-      </button>
+      <div className="imgprep-tree-row imgprep-tree-folder-row" style={{ paddingLeft: 12 + depth * 16 }}>
+        {selectable ? (
+          <input
+            type="checkbox"
+            className="imgprep-tree-check"
+            checked={checked}
+            disabled={disabled}
+            onChange={e => onToggle(entry.relativePath, e.target.checked)}
+            aria-label={`${entry.name} を選択`}
+          />
+        ) : (
+          <span className="imgprep-tree-check-spacer" aria-hidden />
+        )}
+        <button
+          type="button"
+          className="imgprep-tree-folder-btn"
+          onClick={() => setOpen(v => !v)}
+        >
+          <span className={`imgprep-tree-caret${open ? ' open' : ''}`} aria-hidden />
+          <span className="imgprep-tree-icon folder" aria-hidden />
+          <span className="imgprep-tree-name">{entry.name}</span>
+        </button>
+      </div>
       {open && entry.children.map(child => (
-        <TreeNode key={child.relativePath} entry={child} depth={depth + 1} />
+        <TreeNode
+          key={child.relativePath}
+          entry={child}
+          depth={depth + 1}
+          selected={selected}
+          onToggle={onToggle}
+          disabled={disabled}
+        />
       ))}
     </div>
   )
 }
 
-function CategoryBlock({ category }: { category: ApiImageCategoryNode }) {
+function CategoryBlock({
+  category,
+  selected,
+  onToggle,
+  disabled,
+}: {
+  category: ApiImageCategoryNode
+  selected: Set<string>
+  onToggle: (path: string, checked: boolean) => void
+  disabled: boolean
+}) {
   const [open, setOpen] = useState(true)
   const fileCount = countFiles(category.entries)
 
@@ -68,7 +118,14 @@ function CategoryBlock({ category }: { category: ApiImageCategoryNode }) {
             <div className="imgprep-empty">（空）</div>
           ) : (
             category.entries.map(entry => (
-              <TreeNode key={entry.relativePath} entry={entry} depth={0} />
+              <TreeNode
+                key={entry.relativePath}
+                entry={entry}
+                depth={0}
+                selected={selected}
+                onToggle={onToggle}
+                disabled={disabled}
+              />
             ))
           )}
         </div>
@@ -86,6 +143,39 @@ function countFiles(entries: ApiImageTreeEntry[]): number {
   return n
 }
 
+/** ファイル、または空フォルダのみ選択可（UI と間引きで共有）。 */
+function canSelectEntry(entry: ApiImageTreeEntry): boolean {
+  return !entry.isDirectory || entry.children.length === 0
+}
+
+/** ツリー上の選択可能な relativePath を収集する（選択状態の間引き用）。 */
+function collectSelectableTreePaths(categories: ApiImageCategoryNode[]): Set<string> {
+  const paths = new Set<string>()
+  function walk(entries: ApiImageTreeEntry[]) {
+    for (const e of entries) {
+      if (canSelectEntry(e)) paths.add(e.relativePath)
+      if (e.isDirectory) walk(e.children)
+    }
+  }
+  for (const c of categories) walk(c.entries)
+  return paths
+}
+
+function pruneSelection(prev: Set<string>, valid: Set<string>): Set<string> {
+  const next = new Set<string>()
+  for (const p of prev) {
+    if (valid.has(p)) next.add(p)
+  }
+  return next
+}
+
+function buildConfirmMessage(paths: string[]): string {
+  const previewLimit = 8
+  const preview = paths.slice(0, previewLimit).join('\n')
+  const more = paths.length > previewLimit ? `\n…他 ${paths.length - previewLimit} 件` : ''
+  return `選択した ${paths.length} 件を削除します。よろしいですか？\n\n${preview}${more}`
+}
+
 export default function ImagePrepare() {
   const [dbConfigs, setDbConfigs] = useState<DbListItem[]>(FALLBACK_DBS)
   const [selectedDb, setSelectedDb] = useState<DbName>('kaios')
@@ -99,6 +189,7 @@ export default function ImagePrepare() {
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const [formError, setFormError] = useState('')
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(() => new Set())
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const reloadTree = useCallback(async (db: DbName) => {
@@ -107,6 +198,8 @@ export default function ImagePrepare() {
     try {
       const tree = await getImageTree(db)
       setCategories(tree.categories)
+      const valid = collectSelectableTreePaths(tree.categories)
+      setSelectedPaths(prev => pruneSelection(prev, valid))
     } catch (err) {
       setCategories([])
       setError((err as Error).message)
@@ -122,8 +215,18 @@ export default function ImagePrepare() {
   }, [])
 
   useEffect(() => {
+    setSelectedPaths(new Set())
     void reloadTree(selectedDb)
   }, [selectedDb, reloadTree])
+
+  function onTogglePath(path: string, checked: boolean) {
+    setSelectedPaths(prev => {
+      const next = new Set(prev)
+      if (checked) next.add(path)
+      else next.delete(path)
+      return next
+    })
+  }
 
   function onFilesPicked(list: FileList | null) {
     setSelectedFiles(list ? Array.from(list) : [])
@@ -215,9 +318,47 @@ export default function ImagePrepare() {
     }
   }
 
+  async function handleDeleteSelected() {
+    const paths = Array.from(selectedPaths)
+    if (paths.length === 0) return
+
+    setFormError('')
+    setMessage('')
+
+    if (!window.confirm(buildConfirmMessage(paths))) return
+
+    setBusy(true)
+    try {
+      const result = await deleteImageEntries(selectedDb, paths)
+      const note = result.dryRun ? '（DryRun: 実削除なし）' : ''
+      setMessage(`${result.deleted.length} 件削除しました ${note}`)
+      setSelectedPaths(new Set())
+      await reloadTree(selectedDb)
+    } catch (err) {
+      if (err instanceof ImagePreparePartialDeleteError) {
+        const deletedNote = err.deleted.length > 0
+          ? `（削除済み: ${err.deleted.join(', ')}）`
+          : ''
+        setFormError(`${err.message} ${deletedNote}`)
+      } else {
+        setFormError((err as Error).message)
+      }
+      setSelectedPaths(new Set())
+      try {
+        await reloadTree(selectedDb)
+      } catch {
+        // reloadTree 内で error 表示済み
+      }
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const destPreview = subPath.trim()
     ? `${category}/${subPath.trim().replace(/\\/g, '/')}`
     : category
+
+  const selectedCount = selectedPaths.size
 
   return (
     <div className="imgprep-layout">
@@ -254,6 +395,17 @@ export default function ImagePrepare() {
           <div className="imgprep-title">
             <span className="imgprep-title-text">Files ツリー</span>
             <span className="imgprep-db-label">{selectedDb}</span>
+          </div>
+          <div className="imgprep-toolbar-actions">
+            <span className="imgprep-selection-count">{selectedCount} 件選択</span>
+            <button
+              type="button"
+              className="btn-danger"
+              onClick={() => void handleDeleteSelected()}
+              disabled={busy || selectedCount === 0}
+            >
+              選択削除
+            </button>
           </div>
         </div>
 
@@ -333,7 +485,13 @@ export default function ImagePrepare() {
         {!loading && !error && (
           <div className="imgprep-tree">
             {categories.map(cat => (
-              <CategoryBlock key={cat.name} category={cat} />
+              <CategoryBlock
+                key={cat.name}
+                category={cat}
+                selected={selectedPaths}
+                onToggle={onTogglePath}
+                disabled={busy}
+              />
             ))}
           </div>
         )}

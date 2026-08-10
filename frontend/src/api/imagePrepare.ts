@@ -47,17 +47,54 @@ export class ImagePrepareConflictError extends Error {
   }
 }
 
+export interface ApiImageDeleteResponse {
+  dbName: DbName
+  dryRun: boolean
+  deleted: string[]
+}
+
+/** 検証後の途中失敗（HTTP 500 + deleted）。削除済みパスを参照できる。 */
+export class ImagePreparePartialDeleteError extends Error {
+  deleted: string[]
+
+  constructor(message: string, deleted: string[]) {
+    super(message)
+    this.name = 'ImagePreparePartialDeleteError'
+    this.deleted = deleted
+  }
+}
+
 async function readApiError(response: Response): Promise<string> {
+  let body: { error?: string; conflicts?: string[] } | null = null
   try {
-    const body = await response.json() as { error?: string; conflicts?: string[] }
-    if (body.error && body.conflicts?.length) {
-      return `${body.error}: ${body.conflicts.join(', ')}`
-    }
-    if (body.error) return body.error
+    body = await response.json() as { error?: string; conflicts?: string[] }
   } catch {
     // ignore
   }
-  return `API Error: ${response.status} ${response.statusText}`
+  return formatApiErrorBody(response.status, response.statusText, body)
+}
+
+function formatApiErrorBody(
+  status: number,
+  statusText: string,
+  body: { error?: string; conflicts?: string[] } | null,
+): string {
+  if (body?.error && body.conflicts?.length) {
+    return `${body.error}: ${body.conflicts.join(', ')}`
+  }
+  if (body?.error) return body.error
+  return `API Error: ${status} ${statusText}`
+}
+
+function toPartialDeleteError(
+  status: number,
+  statusText: string,
+  body: { error?: string; deleted?: string[] },
+): ImagePreparePartialDeleteError {
+  return new ImagePreparePartialDeleteError(
+    body.error ?? `API Error: ${status} ${statusText}`,
+    body.deleted ?? [],
+  )
 }
 
 export async function getImageTree(dbName: DbName): Promise<ApiImagePrepareTree> {
@@ -110,6 +147,34 @@ export async function uploadImages(
 
   if (!response.ok) throw new Error(await readApiError(response))
   return response.json() as Promise<ApiImageUploadResponse>
+}
+
+export async function deleteImageEntries(
+  dbName: DbName,
+  paths: string[],
+): Promise<ApiImageDeleteResponse> {
+  const response = await fetch(`${API_BASE}/image-prepare/${dbName}/delete`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ paths }),
+  })
+
+  if (!response.ok) {
+    let body: { error?: string; deleted?: string[]; conflicts?: string[] } | null = null
+    try {
+      body = await response.json() as { error?: string; deleted?: string[]; conflicts?: string[] }
+    } catch {
+      // ignore — fall through to generic error
+    }
+
+    if (response.status === 500 && body && Array.isArray(body.deleted)) {
+      throw toPartialDeleteError(response.status, response.statusText, body)
+    }
+
+    throw new Error(formatApiErrorBody(response.status, response.statusText, body))
+  }
+
+  return response.json() as Promise<ApiImageDeleteResponse>
 }
 
 /** サブフォルダパスのクライアント側検証。問題なければ null。 */
