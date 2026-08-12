@@ -218,6 +218,50 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
     }
 
     [Fact]
+    public async Task RunSqlDeploy_RelativePilotSqlDeployPath_ThrowsBeforeSourceDelete()
+    {
+        var config = CreateConfig();
+        WriteSql(config.DeployedPath, "a.sql");
+        config.PilotSqlDeployPath = "relative-pilot";
+
+        var (svc, runner) = CreateService();
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            svc.RunSqlDeployAsync(config, _ => { }, CancellationToken.None));
+
+        Assert.Contains("PilotSqlDeployPath", ex.Message, StringComparison.Ordinal);
+        Assert.Empty(runner.Calls);
+    }
+
+    [Fact]
+    public async Task RunSqlDeploy_RelativePilotMariaDbPath_ThrowsBeforeSourceDelete()
+    {
+        var config = CreateConfig();
+        Directory.CreateDirectory(config.DeployedPath);
+        WriteSql(config.MariaDbDeployedPath, "mdb.sql");
+        config.PilotMariaDbSqlDeployPath = "relative-maria";
+
+        var (svc, runner) = CreateService();
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            svc.RunSqlDeployAsync(config, _ => { }, CancellationToken.None));
+
+        Assert.Contains("PilotMariaDbSqlDeployPath", ex.Message, StringComparison.Ordinal);
+        Assert.Empty(runner.Calls);
+    }
+
+    [Fact]
+    public async Task RunSqlDeploy_Success_ExitCodeIsNull()
+    {
+        var config = CreateConfig();
+        WriteSql(config.DeployedPath, "a.sql");
+
+        var (svc, _) = CreateService();
+        var result = await svc.RunSqlDeployAsync(config, _ => { }, CancellationToken.None);
+
+        Assert.True(result!.Success);
+        Assert.Null(result.ExitCode);
+    }
+
+    [Fact]
     public async Task RunSqlDeploy_DryRun_DoesNotInvokeProcessRunner_ButLogsRobocopyArgs()
     {
         var config = CreateConfig();

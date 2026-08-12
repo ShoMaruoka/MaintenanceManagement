@@ -236,6 +236,12 @@ public class WebSourceDeployService
             throw new InvalidOperationException(
                 "MariaDbDeployedPath に *.sql がありますが PilotMariaDbSqlDeployPath が未設定です（MariaDB は専用 bat で自動適用します）");
 
+        // Source 初期化（再帰削除）より前に絶対パスを検証（PR #37 N2）
+        if (hasSqlServer)
+            EnsureAbsoluteSqlSourcePath(config.PilotSqlDeploySourcePath, "PilotSqlDeployPath");
+        if (hasMariaDb)
+            EnsureAbsoluteSqlSourcePath(config.PilotMariaDbSqlDeploySourcePath, "PilotMariaDbSqlDeployPath");
+
         if (hasSqlServer)
         {
             var sourceDir = config.PilotSqlDeploySourcePath;
@@ -284,6 +290,8 @@ public class WebSourceDeployService
 
         // View ソース内の DB 名置換（Issue #27）。DryRun はソース、実実行はコピー先 Source を走査。
         // 存在する側だけ走査し、無い側の WARN を出さない（PR #37 Nit）。
+        // SQL Server / MariaDB の両 Source に同じルールを適用する（N5）。
+        // 現行ルール（例: KaiosDB→KaiosDB_pilot）は SQL Server 前提のため、MariaDB 側は通常 no-op。
         if (config.PilotSqlDbNameReplacements.Count > 0)
         {
             var replaceDirs = new List<string>();
@@ -321,7 +329,7 @@ public class WebSourceDeployService
                 onOutputLine($"[DRY-RUN] SQL Server deploy.bat 実行: {config.PilotSqlDeployBatPath}");
             if (hasMariaDb)
                 onOutputLine($"[DRY-RUN] MariaDB deploy.bat 実行: {config.PilotMariaDbSqlDeployBatPath}");
-            return new WebSourceSqlDeployResult(true, 0, null);
+            return new WebSourceSqlDeployResult(true, null, null);
         }
 
         if (hasSqlServer)
@@ -330,7 +338,7 @@ public class WebSourceDeployService
                 return new WebSourceSqlDeployResult(false, null, $"SQL Server deploy.bat が見つかりません: {config.PilotSqlDeployBatPath}");
 
             onOutputLine($"SQL Server deploy.bat 実行: {config.PilotSqlDeployBatPath}");
-            var batExitCode = await RunDeployBatInternalAsync(
+            var batExitCode = await RunDeployBatAsync(
                 config.PilotSqlDeployPath, config.PilotSqlDeployBatPath, onOutputLine, ct);
             if (batExitCode != 0)
                 return new WebSourceSqlDeployResult(false, batExitCode, $"SQL Server deploy.bat がエラー終了しました (exit code {batExitCode})");
@@ -342,28 +350,22 @@ public class WebSourceDeployService
                 return new WebSourceSqlDeployResult(false, null, $"MariaDB deploy.bat が見つかりません: {config.PilotMariaDbSqlDeployBatPath}");
 
             onOutputLine($"MariaDB deploy.bat 実行: {config.PilotMariaDbSqlDeployBatPath}");
-            var batExitCode = await RunDeployBatInternalAsync(
+            var batExitCode = await RunDeployBatAsync(
                 config.PilotMariaDbSqlDeployPath, config.PilotMariaDbSqlDeployBatPath, onOutputLine, ct);
             if (batExitCode != 0)
                 return new WebSourceSqlDeployResult(false, batExitCode, $"MariaDB deploy.bat がエラー終了しました (exit code {batExitCode})");
         }
 
-        return new WebSourceSqlDeployResult(true, 0, null);
+        // 成功時 ExitCode は意味を持たない（複数 bat の代表値にならない）ため null（PR #37 N4）
+        return new WebSourceSqlDeployResult(true, null, null);
     }
 
-    private Task<int> RunDeployBatInternalAsync(
-        string workingDirectory,
-        string batPath,
-        Action<string> onOutputLine,
-        CancellationToken ct) =>
-        RunDeployBatAsync(workingDirectory, batPath, onOutputLine, ct);
-
-    /// <summary>DeployDev2StgPath 未設定などで相対パスになった場合は設定ミスとしてエラーにする。</summary>
+    /// <summary>未設定・相対パスは設定ミスとしてエラーにする（再帰削除より前に呼ぶ）。</summary>
     private static void EnsureAbsoluteSqlSourcePath(string path, string label)
     {
         if (string.IsNullOrWhiteSpace(path) || !Path.IsPathRooted(path))
             throw new InvalidOperationException(
-                $"{label} が絶対パスとして解決できません（DeployDev2StgPath の設定を確認してください）: {path}");
+                $"{label} が絶対パスとして解決できません: {path}");
     }
 
     /// <summary>再帰で *.sql が1件以上あるか（ディレクトリ不存在は空扱い）。</summary>

@@ -99,6 +99,17 @@
 | `DeployDev2StgPath/ForNewCreation/Source/deployed_hold/` | 保留ファイル一覧 | ファイル 0 件として表示される |
 | `DeployDev2StgPath/ForNewCreation/Source/deployed_manual/` | Table / UDTT の手動適用待ち一覧 | 0 件として表示される |
 
+v1.5.0 以降、Pilot で MariaDB SQL を扱う DB には次も必須（未設定のまま `MariaDbDeployedPath` に `*.sql` があると SQL 適用が例外終了する）:
+
+```json
+{
+  "PilotSqlDeployPath": "D:\\Git\\MaintenanceManagement\\test\\PilotSqlDeploy\\kaios",
+  "PilotMariaDbSqlDeployPath": "D:\\Git\\MaintenanceManagement\\test\\PilotSqlDeploy\\kaios_MariaDB"
+}
+```
+
+各パス直下に事前配置の `deploy.bat` と、実行時に初期化される `Source` フォルダが使われる。
+
 ### 1-5. 設定ファイル全体サンプル（DryRun + ローカル SQL Server）
 
 ```json

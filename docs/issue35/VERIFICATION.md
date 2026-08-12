@@ -98,4 +98,6 @@ bat が Source 内の非 SQL（実行順リスト等）に依存している場�
 - B2: Pilot SQL コピーは *.sql のみ（専用経路）。Source は毎回合差し直し。非 SQL 補助は運ばれない。
   → 実機 bat が Source 内非 SQL に依存していないことの目視を運用で実施（表は docs/issue35/VERIFICATION.md）。
 - Blocking #2: PilotMariaDbSqlDeployPath + 専用 bat で MariaDB 自動適用を実装済み。
+- N1: appsettings.Development.json / VERSIONING_GUIDE / LOCAL_TEST_GUIDE に設定必須を反映。
+- N2: Pilot* Source の絶対パス検証を Directory.Delete より前に実施。
 ```
