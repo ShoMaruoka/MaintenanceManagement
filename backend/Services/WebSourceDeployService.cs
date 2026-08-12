@@ -214,8 +214,8 @@ public class WebSourceDeployService
             return null;
 
         // 未設定（相対パス等）は空スキップより先にエラー（I1）
-        EnsureAbsoluteSqlSourcePath(config.DeployedPath, "DeployedPath");
-        EnsureAbsoluteSqlSourcePath(config.MariaDbDeployedPath, "MariaDbDeployedPath");
+        EnsureAbsoluteSqlSourcePath(config.DeployedPath, "DeployedPath", "DeployDev2StgPath");
+        EnsureAbsoluteSqlSourcePath(config.MariaDbDeployedPath, "MariaDbDeployedPath", "DeployDev2StgPath");
 
         var sqlServerSrc = config.DeployedPath;
         var mariaDbSrc = config.MariaDbDeployedPath;
@@ -238,9 +238,9 @@ public class WebSourceDeployService
 
         // Source 初期化（再帰削除）より前に絶対パスを検証（PR #37 N2）
         if (hasSqlServer)
-            EnsureAbsoluteSqlSourcePath(config.PilotSqlDeploySourcePath, "PilotSqlDeployPath");
+            EnsureAbsoluteSqlSourcePath(config.PilotSqlDeploySourcePath, "PilotSqlDeploySourcePath", "PilotSqlDeployPath");
         if (hasMariaDb)
-            EnsureAbsoluteSqlSourcePath(config.PilotMariaDbSqlDeploySourcePath, "PilotMariaDbSqlDeployPath");
+            EnsureAbsoluteSqlSourcePath(config.PilotMariaDbSqlDeploySourcePath, "PilotMariaDbSqlDeploySourcePath", "PilotMariaDbSqlDeployPath");
 
         if (hasSqlServer)
         {
@@ -360,12 +360,15 @@ public class WebSourceDeployService
         return new WebSourceSqlDeployResult(true, null, null);
     }
 
-    /// <summary>未設定・相対パスは設定ミスとしてエラーにする（再帰削除より前に呼ぶ）。</summary>
-    private static void EnsureAbsoluteSqlSourcePath(string path, string label)
+    /// <summary>
+    /// 未設定・相対パスは設定ミスとしてエラーにする（再帰削除より前に呼ぶ）。
+    /// <paramref name="configKeyHint"/> は運用者が直すべき設定キー（導出プロパティの場合は親キー）。
+    /// </summary>
+    private static void EnsureAbsoluteSqlSourcePath(string path, string label, string configKeyHint)
     {
         if (string.IsNullOrWhiteSpace(path) || !Path.IsPathRooted(path))
             throw new InvalidOperationException(
-                $"{label} が絶対パスとして解決できません: {path}");
+                $"{label} が絶対パスとして解決できません（{configKeyHint} の設定を確認してください）: {path}");
     }
 
     /// <summary>再帰で *.sql が1件以上あるか（ディレクトリ不存在は空扱い）。</summary>

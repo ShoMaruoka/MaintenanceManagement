@@ -213,8 +213,9 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
         config.DeployDev2StgPath = "";
 
         var (svc, _) = CreateService();
-        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
             svc.RunSqlDeployAsync(config, _ => { }, CancellationToken.None));
+        Assert.Contains("DeployDev2StgPath", ex.Message, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -222,14 +223,32 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
     {
         var config = CreateConfig();
         WriteSql(config.DeployedPath, "a.sql");
-        config.PilotSqlDeployPath = "relative-pilot";
 
-        var (svc, runner) = CreateService();
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            svc.RunSqlDeployAsync(config, _ => { }, CancellationToken.None));
+        var relName = $"mm-sentinel-ss-{Guid.NewGuid():N}";
+        var absRoot = Path.Combine(Directory.GetCurrentDirectory(), relName);
+        var sourceDir = Path.Combine(absRoot, "Source");
+        Directory.CreateDirectory(sourceDir);
+        var sentinel = Path.Combine(sourceDir, "keep-me.txt");
+        File.WriteAllText(sentinel, "sentinel");
 
-        Assert.Contains("PilotSqlDeployPath", ex.Message, StringComparison.Ordinal);
-        Assert.Empty(runner.Calls);
+        try
+        {
+            config.PilotSqlDeployPath = relName;
+            var (svc, runner) = CreateService();
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                svc.RunSqlDeployAsync(config, _ => { }, CancellationToken.None));
+
+            Assert.Contains("PilotSqlDeployPath", ex.Message, StringComparison.Ordinal);
+            Assert.Contains("設定を確認してください", ex.Message, StringComparison.Ordinal);
+            Assert.Empty(runner.Calls);
+            // ガードが Delete より前であることの直接検証（間に移動した回帰を捕まえる）
+            Assert.True(File.Exists(sentinel), "Source 初期化（再帰削除）がガードより先に走ってはならない");
+        }
+        finally
+        {
+            if (Directory.Exists(absRoot))
+                Directory.Delete(absRoot, recursive: true);
+        }
     }
 
     [Fact]
@@ -238,14 +257,31 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
         var config = CreateConfig();
         Directory.CreateDirectory(config.DeployedPath);
         WriteSql(config.MariaDbDeployedPath, "mdb.sql");
-        config.PilotMariaDbSqlDeployPath = "relative-maria";
 
-        var (svc, runner) = CreateService();
-        var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
-            svc.RunSqlDeployAsync(config, _ => { }, CancellationToken.None));
+        var relName = $"mm-sentinel-mdb-{Guid.NewGuid():N}";
+        var absRoot = Path.Combine(Directory.GetCurrentDirectory(), relName);
+        var sourceDir = Path.Combine(absRoot, "Source");
+        Directory.CreateDirectory(sourceDir);
+        var sentinel = Path.Combine(sourceDir, "keep-me.txt");
+        File.WriteAllText(sentinel, "sentinel");
 
-        Assert.Contains("PilotMariaDbSqlDeployPath", ex.Message, StringComparison.Ordinal);
-        Assert.Empty(runner.Calls);
+        try
+        {
+            config.PilotMariaDbSqlDeployPath = relName;
+            var (svc, runner) = CreateService();
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                svc.RunSqlDeployAsync(config, _ => { }, CancellationToken.None));
+
+            Assert.Contains("PilotMariaDbSqlDeployPath", ex.Message, StringComparison.Ordinal);
+            Assert.Contains("設定を確認してください", ex.Message, StringComparison.Ordinal);
+            Assert.Empty(runner.Calls);
+            Assert.True(File.Exists(sentinel), "Source 初期化（再帰削除）がガードより先に走ってはならない");
+        }
+        finally
+        {
+            if (Directory.Exists(absRoot))
+                Directory.Delete(absRoot, recursive: true);
+        }
     }
 
     [Fact]
