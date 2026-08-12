@@ -472,7 +472,53 @@ public class DatabaseService
             }
         }
 
+        stats.LastPilotKaios = GetLastSuccessfulPilotDeploy(conn, "kaios");
+        stats.LastPilotGos = GetLastSuccessfulPilotDeploy(conn, "gos");
+
         return stats;
+    }
+
+    /// <summary>
+    /// Pilot 最終成功（Issue #35）:
+    /// 同一 RunId の全行が success かつ、全行が除外 Mode 集合に属するわけではない Run のうち、
+    /// 最も新しい ExecutedAt を返す。履歴なしは null。
+    /// </summary>
+    private static PilotDeploySummary? GetLastSuccessfulPilotDeploy(SqliteConnection conn, string dbName)
+    {
+        using var cmd = conn.CreateCommand();
+        // 除外 Mode は有限リストの完全一致 IN（E1）。部分一致は使わない。
+        cmd.CommandText = """
+            SELECT ExecutedAt, ExecutedBy
+            FROM (
+                SELECT
+                    RunId,
+                    MAX(ExecutedAt) AS ExecutedAt,
+                    MAX(ExecutedBy) AS ExecutedBy,
+                    COUNT(*) AS TotalRows,
+                    SUM(CASE WHEN Result = 'success' THEN 1 ELSE 0 END) AS SuccessRows,
+                    SUM(CASE WHEN Mode IN (
+                        'both-dryrun', 'web-dryrun', 'sql-dryrun', 'sql-skipped'
+                    ) THEN 1 ELSE 0 END) AS ExcludedModeRows
+                FROM WebSourceDeployLog
+                WHERE DbName = $dbName
+                GROUP BY RunId
+            )
+            WHERE SuccessRows = TotalRows
+              AND ExcludedModeRows < TotalRows
+            ORDER BY ExecutedAt DESC
+            LIMIT 1;
+            """;
+        cmd.Parameters.AddWithValue("$dbName", dbName);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            return null;
+
+        return new PilotDeploySummary
+        {
+            DbName = dbName,
+            ExecutedAt = reader.GetString(0),
+            ExecutedBy = reader.GetString(1),
+        };
     }
 
     private SqliteConnection OpenConnection()

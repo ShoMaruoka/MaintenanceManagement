@@ -184,10 +184,16 @@ export default function WebSourcePrepare() {
             ))}
             {result.sqlDeploy && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '4px 0', borderTop: '1px solid #eef0f2', marginTop: 6, paddingTop: 8 }}>
-                <span style={{ color: result.sqlDeploy.success ? '#22a06b' : '#c5283d' }}>{result.sqlDeploy.success ? '✓' : '✗'}</span>
+                <span style={{ color: result.sqlDeploy.skipped ? '#b25e09' : result.sqlDeploy.success ? '#22a06b' : '#c5283d' }}>
+                  {result.sqlDeploy.skipped ? '–' : result.sqlDeploy.success ? '✓' : '✗'}
+                </span>
                 <span style={{ fontWeight: 600 }}>SQL適用</span>
-                {!result.sqlDeploy.success && result.sqlDeploy.errorMessage && (
-                  <span style={{ color: '#c5283d' }}>{result.sqlDeploy.errorMessage}</span>
+                {result.sqlDeploy.skipped ? (
+                  <span style={{ color: '#b25e09' }}>スキップ</span>
+                ) : (
+                  !result.sqlDeploy.success && result.sqlDeploy.errorMessage && (
+                    <span style={{ color: '#c5283d' }}>{result.sqlDeploy.errorMessage}</span>
+                  )
                 )}
               </div>
             )}
@@ -244,6 +250,9 @@ export default function WebSourcePrepare() {
             <div style={{ fontSize: 11.5, fontFamily: "'JetBrains Mono', monospace", background: '#f6f7f9', borderRadius: 6, padding: '10px 12px', lineHeight: 1.9 }}>
               <div>STG: {info.webSourcePath}</div>
               <div>共通画像: {info.commonImagePath || '未設定（スキップ）'}</div>
+              <div>deployed: {info.deployedPath}</div>
+              <div>MariaDB deployed: {info.mariaDbDeployedPath}</div>
+              <div>Files: {info.filesPath}</div>
               {info.pilotTargets.map(t => (
                 <div key={t.name}>
                   <div>{t.name}: {t.destWebSourcePath}</div>

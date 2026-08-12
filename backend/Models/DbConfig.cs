@@ -80,7 +80,7 @@ public class DbConfig
     /// </summary>
     public string PilotSqlDeployPath { get; set; } = "";
 
-    /// <summary>PilotSqlDeployPath 配下の SQL コピー先（Deploy2PrdPath の内容をここへコピーする）。</summary>
+    /// <summary>PilotSqlDeployPath 配下の SQL コピー先（DeployedPath / MariaDbDeployedPath の *.sql をここへコピーする）。</summary>
     public string PilotSqlDeploySourcePath => Path.Combine(PilotSqlDeployPath, "Source");
 
     /// <summary>PilotSqlDeployPath 配下の適用バッチ（事前配置・本システムは作成しない）。</summary>
