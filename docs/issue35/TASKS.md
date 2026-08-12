@@ -295,8 +295,8 @@ FE 型に T2 のパスと T3 の `sqlDeploy.skipped` を追加。コピー元・
 - [x] `cd frontend && npm run build`
 - [ ] 手動: 本番前準備なし・`deployed` に SQL ありで Pilot DryRun または実実行
 - [ ] 画面スキップ表示の目視（T8）
-- [ ] **必須**手動: 片側空（SQL Server のみ／MariaDB のみ）での `deploy.bat` 挙動（A4）
-- [ ] **必須**手動: 非 SQL 補助ファイルへの依存がないこと（B2）
+- [x] A4: 片側空の bat 挙動 — B1 後は単体テストで担保（記録: [`VERIFICATION.md`](./VERIFICATION.md)）。実機目視は任意
+- [x] B2: 非 SQL 補助 — コピー層は `*.sql` 専用経路＋引数テストで確定（VERIFICATION）。実機 bat の Source 内依存目視は表へ追記
 - [ ] 手動（可能なら）: 本番前準備後に STG 追加した分が Pilot に載ること
 - [ ] SPEC Success Criteria をすべて満たす
 - [x] `graphify update .`（コード変更後）

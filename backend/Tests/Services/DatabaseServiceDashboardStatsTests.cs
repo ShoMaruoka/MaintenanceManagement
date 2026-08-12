@@ -232,4 +232,21 @@ public class DatabaseServiceDashboardStatsTests : IDisposable
         Assert.Equal("new", stats.LastPilotKaios!.ExecutedBy);
         Assert.Equal("gos-user", stats.LastPilotGos!.ExecutedBy);
     }
+
+    [Fact]
+    public void GetDashboardStats_ExecutedBy_ComesFromLatestExecutedAtRow_NotLexicalMax()
+    {
+        // 同一 Run 内で ExecutedBy が異なっても、辞書順 MAX（zzz）ではなく最新 ExecutedAt 行の実行者を返す。
+        var runId = Guid.NewGuid().ToString("n");
+        var older = DateTime.UtcNow.AddMinutes(-20);
+        var newer = DateTime.UtcNow.AddMinutes(-5);
+        InsertPilotLog(runId, "kaios", "pilot1", "both", "zzz", "success", older);
+        InsertPilotLog(runId, "kaios", "pilot2", "both", "zzz", "success", older);
+        InsertPilotLog(runId, "kaios", "sql", "sql", "latest-user", "success", newer);
+
+        var stats = _db.GetDashboardStats();
+
+        Assert.NotNull(stats.LastPilotKaios);
+        Assert.Equal("latest-user", stats.LastPilotKaios!.ExecutedBy);
+    }
 }

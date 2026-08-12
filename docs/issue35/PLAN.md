@@ -26,9 +26,11 @@ RunSqlDeploy のソース変更            PilotDeploySummary モデル
 ## Architecture Decisions
 
 1. **SQL コピーは2ソース・2パス（`*.sql` のみ）— B1**
-   - `DeployedPath` → `PilotSqlDeploySourcePath`（フラット）
-   - `MariaDbDeployedPath` → `PilotSqlDeploySourcePath\MariaDB`
+   - `DeployedPath` → `PilotSqlDeploySourcePath`（SQL Server）
+   - `MariaDbDeployedPath` → **`PilotMariaDbSqlDeploySourcePath`**（別ツリー。SQL Server Source 配下ではない）
    - 空判定・コピーとも **`*.sql` を正**とする
+   - 適用は **SQL Server bat → MariaDB bat** の順（各側に `*.sql` があるときのみ）
+   - `PilotMariaDbSqlDeployPath` は kaios/gos の appsettings に設定（sample 追記済み）。未設定かつ MariaDB に SQL あり → エラー
    - 共通 `BuildArguments`（Web／画像／Files）にはファイル名フィルタを足さない
    - **SQL コピー専用**に `*.sql` フィルタ付き経路を用意し、他呼出に影響させない
 
@@ -115,8 +117,8 @@ Phase 4  T8（パス3行＋スキップ画面）→ 統合（片側空 bat 必�
 | リスク | 影響 | 対策 |
 |--------|------|------|
 | `deploy.bat` が Deploy2Prd 前提 | 配置失敗 | Source 階層を本番前準備と揃える |
-| 片側空で bat が非0（A4） | SQL 失敗 | **必須**手動確認 |
-| 非 SQL 補助ファイルが運ばれない（B2） | bat 依存崩れ | 必須手動確認 |
+| 片側空で bat が非0（A4） | SQL 失敗 | B1 後は片側 bat のみ起動。単体＋[`VERIFICATION.md`](./VERIFICATION.md) |
+| 非 SQL 補助ファイルが運ばれない（B2） | bat 依存崩れ | コピー層は `*.sql` 固定。実機 bat 目視は VERIFICATION 表 |
 | Web 行まで `sql-skipped`（D3） | A2 無効化 | 行別表＋`ResolveLogMode` テスト |
 | Mode 部分一致集計（E1） | 静かに壊れる | 除外は有限リストの `IN` |
 | 過去 `Mode='full'`（B4） | 初回表示想定外 | 注記のみ |
@@ -146,8 +148,8 @@ Phase 4  T8（パス3行＋スキップ画面）→ 統合（片側空 bat 必�
 - [ ] `dotnet build` / `dotnet test` / `npm run build`
 - [ ] 画面スキップ表示（T8）
 - [ ] 手動: 準備なし・deployed ありで Pilot
-- [ ] **必須**手動: 片側空の `deploy.bat`
-- [ ] **必須**手動: 非 SQL 補助ファイル依存の有無（B2）
+- [x] **必須**手動相当: 片側空の `deploy.bat`（B1 後は単体テストで担保。記録は [`VERIFICATION.md`](./VERIFICATION.md)）
+- [x] **必須**手動相当: 非 SQL 補助（コピー層はコード＋引数テストで確定。実機 bat 目視は VERIFICATION 表）
 - [ ] 手動（可能なら）: 準備後に STG 追加した分が Pilot に載る
 
 ## Out of Scope

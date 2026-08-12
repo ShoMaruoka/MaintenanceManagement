@@ -56,6 +56,7 @@ public class WebSourcePrepareController : ControllerBase
             DeployedPath = config.DeployedPath,
             MariaDbDeployedPath = config.MariaDbDeployedPath,
             FilesPath = config.FilesPath,
+            PilotMariaDbSqlDeployPath = config.PilotMariaDbSqlDeployPath,
             PilotTargets = config.PilotTargets
                 .Select(t => new WebSourcePilotTargetInfo
                 {

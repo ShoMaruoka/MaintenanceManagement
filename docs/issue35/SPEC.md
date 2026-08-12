@@ -103,25 +103,29 @@ var mariaDbDest = Path.Combine(sourceDir, "MariaDB");
 
 ### 1.1 SQL 適用（`RunSqlDeployAsync`）
 
-1. `PilotSqlDeployPath` 未設定 → 従来どおり本ステップ自体をスキップ（`null` 返却）
+1. `PilotSqlDeployPath` と `PilotMariaDbSqlDeployPath` の**両方**未設定 → 本ステップ自体をスキップ（`null` 返却）
 2. **パス妥当性（未設定 vs 不存在）** — 空スキップより先に判定する
    - `DeployDev2StgPath` 未設定などにより `DeployedPath` / `MariaDbDeployedPath` が絶対パスでない場合 → **従来どおりエラー**（設定ミスを成功扱いにしない）
    - 絶対パスとして妥当だがディレクトリ不存在、または再帰で `*.sql` が0件 → 空扱いへ
-3. `PilotSqlDeploySourcePath` を空にしてから再作成（DryRun 時はログのみ）
+3. 使う側の Source を空にしてから再作成（DryRun 時はログのみ）
 4. **コピー元・コピー対象**
    - SQL Server: `config.DeployedPath` → `PilotSqlDeploySourcePath`
-   - MariaDB: `config.MariaDbDeployedPath` → `PilotSqlDeploySourcePath\MariaDB`
-   - **空判定・コピーとも `*.sql` を正とする**（`.sql` 以外だけがある場合は空扱い。コピーも `*.sql` のみ）
+   - MariaDB: `config.MariaDbDeployedPath` → **`PilotMariaDbSqlDeploySourcePath`**（SQL Server の Source 配下ではない。STG と同様に別ツリー）
+   - **空判定・コピーとも `*.sql` を正とする**
 5. **含めないもの**: `DeployedHoldPath` / `MariaDbDeployedHoldPath` / `DeployedManualPath`
 6. **空扱い（スキップ）**
    - 両ソースとも空のとき: コピーせず、**`deploy.bat` 存在チェックより前に return**（bat 非起動を保証）
    - ログに WARN（「適用対象 SQL なし」）
-   - 戻り値・SSE: `WebSourceSqlDeployResult` に **`Skipped: true`**（または同等の status）を載せ、画面でも「スキップ」と分かるようにする（✓ 成功と同一表示にしない）
-   - 履歴行の **`Result` は `success` のまま**（`skipped` を Result に入れない）。識別は **Mode**（例: TargetName=`sql` の行の Mode=`sql-skipped`）
-   - 片側だけ空の場合は存在する側のみコピーし、通常どおり View 置換 → `deploy.bat` へ進む（片側0件で bat が非0終了しうる点は**必須**の手動確認）
-7. View DB 名置換・`deploy.bat` 実行は既存（Issue #27）どおり
-   - DryRun 時の置換プレビューは **`DeployedPath` と `MariaDbDeployedPath` の両方**を走査する
-8. **破壊的変更**: `Deploy2PrdPath` を Pilot SQL のコピー元としては使わない
+   - 戻り値・SSE: `WebSourceSqlDeployResult` に **`Skipped: true`**。画面でも「スキップ」と分かるようにする
+   - 履歴行の **`Result` は `success` のまま**。識別は Mode（`sql-skipped`）
+7. **適用バッチ（B1・PR #37 Blocking #2）**
+   - SQL Server: `PilotSqlDeployPath\deploy.bat`（作業ディレクトリ `PilotSqlDeployPath`）
+   - MariaDB: **`PilotMariaDbSqlDeployPath\deploy.bat`**（作業ディレクトリ `PilotMariaDbSqlDeployPath`）。本システムは作成しない（事前配置）
+   - `*.sql` がある側だけ実行。両方あれば SQL Server → MariaDB の順
+   - MariaDB に `*.sql` があるのに `PilotMariaDbSqlDeployPath` 未設定 → **エラー**（コピーのみで Success にしない）
+   - SQL Server に `*.sql` があるのに `PilotSqlDeployPath` 未設定 → **エラー**
+8. View DB 名置換は両コピー先（または DryRun 時は両ソース）を走査
+9. **破壊的変更**: `Deploy2PrdPath` を Pilot SQL のコピー元としては使わない。MariaDB を SQL Server Source\MariaDB に載せない
 
 ### 1.2 静的ファイル（各 pilot ターゲットループ内）
 
@@ -286,3 +290,4 @@ public PilotDeploySummary? LastPilotGos { get; set; }
 | 2026-08-12 | DryRun＋空スキップ同時は DryRun 優先（`sql-dryrun`） | レビュー E2 |
 | 2026-08-12 | Mode 決定は純関数＋単体テスト（T5a） | レビュー D4 |
 | 2026-08-12 | Skipped 時ログ文言（2経路）を T3 受入に含める | レビュー D5 |
+| 2026-08-12 | Pilot MariaDB は別 `PilotMariaDbSqlDeployPath`＋専用 bat で自動適用（B1） | PR #37 Blocking #2・ユーザー確定 |

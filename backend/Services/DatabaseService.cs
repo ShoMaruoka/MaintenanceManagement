@@ -488,12 +488,11 @@ public class DatabaseService
         using var cmd = conn.CreateCommand();
         // 除外 Mode は有限リストの完全一致 IN（E1）。部分一致は使わない。
         cmd.CommandText = """
-            SELECT ExecutedAt, ExecutedBy
+            SELECT t.ExecutedAt, t.ExecutedBy
             FROM (
                 SELECT
                     RunId,
                     MAX(ExecutedAt) AS ExecutedAt,
-                    MAX(ExecutedBy) AS ExecutedBy,
                     COUNT(*) AS TotalRows,
                     SUM(CASE WHEN Result = 'success' THEN 1 ELSE 0 END) AS SuccessRows,
                     SUM(CASE WHEN Mode IN (
@@ -502,10 +501,15 @@ public class DatabaseService
                 FROM WebSourceDeployLog
                 WHERE DbName = $dbName
                 GROUP BY RunId
-            )
-            WHERE SuccessRows = TotalRows
-              AND ExcludedModeRows < TotalRows
-            ORDER BY ExecutedAt DESC
+            ) AS r
+            -- ExecutedBy は辞書順 MAX ではなく、その Run の最新 ExecutedAt 行から取る（PR #37 #5）
+            INNER JOIN WebSourceDeployLog AS t
+                ON t.RunId = r.RunId
+               AND t.DbName = $dbName
+               AND t.ExecutedAt = r.ExecutedAt
+            WHERE r.SuccessRows = r.TotalRows
+              AND r.ExcludedModeRows < r.TotalRows
+            ORDER BY t.ExecutedAt DESC, t.TargetName
             LIMIT 1;
             """;
         cmd.Parameters.AddWithValue("$dbName", dbName);
