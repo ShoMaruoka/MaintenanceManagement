@@ -20,6 +20,8 @@ public class WebSourceInfoResponse
     public string MariaDbDeployedPath { get; set; } = "";
     /// <summary>STG 側静的ファイル（DeployDev2StgPath\Files）（Issue #35）。</summary>
     public string FilesPath { get; set; } = "";
+    /// <summary>Pilot SQL Server 適用ルート（未設定時は空）。</summary>
+    public string PilotSqlDeployPath { get; set; } = "";
     /// <summary>Pilot MariaDB 適用ルート（未設定時は空。Issue #35 B1）。</summary>
     public string PilotMariaDbSqlDeployPath { get; set; } = "";
     public List<WebSourcePilotTargetInfo> PilotTargets { get; set; } = [];

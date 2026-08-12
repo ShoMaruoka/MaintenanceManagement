@@ -16,6 +16,8 @@ export interface ApiWebSourceInfo {
   deployedPath: string
   mariaDbDeployedPath: string
   filesPath: string
+  /** Pilot SQL Server 適用ルート。未設定時は空 */
+  pilotSqlDeployPath: string
   /** Pilot MariaDB 適用ルート。未設定時は空（Issue #35 B1） */
   pilotMariaDbSqlDeployPath: string
   pilotTargets: ApiWebSourcePilotTargetInfo[]

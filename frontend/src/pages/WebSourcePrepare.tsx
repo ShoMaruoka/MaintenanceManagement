@@ -253,6 +253,7 @@ export default function WebSourcePrepare() {
               <div>deployed: {info.deployedPath}</div>
               <div>MariaDB deployed: {info.mariaDbDeployedPath}</div>
               <div>Files: {info.filesPath}</div>
+              <div>Pilot SQL Server 適用: {info.pilotSqlDeployPath || '未設定'}</div>
               <div>Pilot MariaDB 適用: {info.pilotMariaDbSqlDeployPath || '未設定'}</div>
               {info.pilotTargets.map(t => (
                 <div key={t.name}>
