@@ -22,9 +22,9 @@
 
 | # | ファイル | 記述 |
 |---|---------|------|
-| 1 | `backend/MaintenanceManagement.Api.csproj` | `<Version>1.4.0</Version>` |
-| 2 | `frontend/package.json` | `"version": "1.4.0"` |
-| 3 | Git タグ | `v1.4.0`（`v` プレフィックス付き） |
+| 1 | `backend/MaintenanceManagement.Api.csproj` | `<Version>1.5.0</Version>` |
+| 2 | `frontend/package.json` | `"version": "1.5.0"` |
+| 3 | Git タグ | `v1.5.0`（`v` プレフィックス付き） |
 
 `frontend/vite.config.ts` は `package.json` の値を `__APP_VERSION__` としてビルド時に埋め込むため、
 フロント側で版番号を直接書く必要はない。
@@ -139,6 +139,7 @@ curl http://<サーバー>/api/version
 | `v1.2.1` | — | 2026-08-06 | ダッシュボードのサマリーカードを実データに接続。`/api/history/stats` の追加（本番前準備の最終実行、直近30日の成功率、実行中セッション数） |
 | `v1.3.0` | — | 2026-08-07 | 操作区分（新規／更新）の自動判定（Issue #32）。STG DB 存在を優先し Git をフォールバック。固定バッジ化、選択状態の Set 化 |
 | `v1.4.0` | — | 2026-08-10 | 画像情報準備の削除機能（Issue #23）。ツリー複数選択・空フォルダ削除・`POST .../delete`・DryRun／部分成功対応 |
+| `v1.5.0` | — | 2026-08-12 | Pilot適用フロー変更（Issue #35）。SQL/Files を STG 適用後（`deployed/` / `FilesPath`）起点に切替、ダッシュボードに kaios/gos 別の Pilot 最終適用表示。**設定:** pilot で MariaDB SQL を扱う DB は `PilotMariaDbSqlDeployPath`（専用 `deploy.bat` 配置先）の追加が必須。未設定のまま `MariaDbDeployedPath` に `*.sql` があると SQL 適用ステップが例外終了する |
 
 ### 補足: MariaDB 対応の境界について
 

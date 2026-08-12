@@ -472,7 +472,57 @@ public class DatabaseService
             }
         }
 
+        stats.LastPilotKaios = GetLastSuccessfulPilotDeploy(conn, "kaios");
+        stats.LastPilotGos = GetLastSuccessfulPilotDeploy(conn, "gos");
+
         return stats;
+    }
+
+    /// <summary>
+    /// Pilot 最終成功（Issue #35）:
+    /// 同一 RunId の全行が success かつ、全行が除外 Mode 集合に属するわけではない Run のうち、
+    /// 最も新しい ExecutedAt を返す。履歴なしは null。
+    /// </summary>
+    private static PilotDeploySummary? GetLastSuccessfulPilotDeploy(SqliteConnection conn, string dbName)
+    {
+        using var cmd = conn.CreateCommand();
+        // 除外 Mode は有限リストの完全一致 IN（E1）。部分一致は使わない。
+        cmd.CommandText = """
+            SELECT t.ExecutedAt, t.ExecutedBy
+            FROM (
+                SELECT
+                    RunId,
+                    MAX(ExecutedAt) AS ExecutedAt,
+                    COUNT(*) AS TotalRows,
+                    SUM(CASE WHEN Result = 'success' THEN 1 ELSE 0 END) AS SuccessRows,
+                    SUM(CASE WHEN Mode IN (
+                        'both-dryrun', 'web-dryrun', 'sql-dryrun', 'sql-skipped'
+                    ) THEN 1 ELSE 0 END) AS ExcludedModeRows
+                FROM WebSourceDeployLog
+                WHERE DbName = $dbName
+                GROUP BY RunId
+            ) AS r
+            -- ExecutedBy は辞書順 MAX ではなく、その Run の最新 ExecutedAt 行から取る（PR #37 #5）
+            INNER JOIN WebSourceDeployLog AS t
+                ON t.RunId = r.RunId
+               AND t.DbName = $dbName
+               AND t.ExecutedAt = r.ExecutedAt
+            WHERE r.SuccessRows = r.TotalRows
+              AND r.ExcludedModeRows < r.TotalRows
+            ORDER BY t.ExecutedAt DESC, t.TargetName
+            LIMIT 1;
+            """;
+        cmd.Parameters.AddWithValue("$dbName", dbName);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            return null;
+
+        return new PilotDeploySummary
+        {
+            DbName = dbName,
+            ExecutedAt = reader.GetString(0),
+            ExecutedBy = reader.GetString(1),
+        };
     }
 
     private SqliteConnection OpenConnection()

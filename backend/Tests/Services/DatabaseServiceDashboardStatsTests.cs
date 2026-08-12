@@ -119,4 +119,134 @@ public class DatabaseServiceDashboardStatsTests : IDisposable
         Assert.Equal(3, stats.LastPrepare.HeldFiles);
         Assert.Equal(2, stats.LastPrepare.ManualFiles);
     }
+
+    private void InsertPilotLog(
+        string runId,
+        string dbName,
+        string targetName,
+        string mode,
+        string executedBy,
+        string result,
+        DateTime? executedAt = null)
+    {
+        var at = (executedAt ?? DateTime.UtcNow).ToString("o");
+        using var conn = new SqliteConnection($"Data Source={_dbPath}");
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO WebSourceDeployLog (RunId, DbName, TargetName, Mode, ExecutedBy, ExecutedAt, Result, LogDetail)
+            VALUES ($runId, $dbName, $targetName, $mode, $executedBy, $executedAt, $result, NULL);
+            """;
+        cmd.Parameters.AddWithValue("$runId", runId);
+        cmd.Parameters.AddWithValue("$dbName", dbName);
+        cmd.Parameters.AddWithValue("$targetName", targetName);
+        cmd.Parameters.AddWithValue("$mode", mode);
+        cmd.Parameters.AddWithValue("$executedBy", executedBy);
+        cmd.Parameters.AddWithValue("$executedAt", at);
+        cmd.Parameters.AddWithValue("$result", result);
+        cmd.ExecuteNonQuery();
+    }
+
+    [Fact]
+    public void GetDashboardStats_ReturnsNullPilot_WhenNoHistory()
+    {
+        var stats = _db.GetDashboardStats();
+        Assert.Null(stats.LastPilotKaios);
+        Assert.Null(stats.LastPilotGos);
+    }
+
+    [Fact]
+    public void GetDashboardStats_AdoptsSuccessfulPilotRun()
+    {
+        var runId = Guid.NewGuid().ToString("n");
+        var at = DateTime.UtcNow.AddHours(-1);
+        InsertPilotLog(runId, "kaios", "pilot1", "both", "alice", "success", at);
+        InsertPilotLog(runId, "kaios", "pilot2", "both", "alice", "success", at);
+        InsertPilotLog(runId, "kaios", "sql", "sql", "alice", "success", at);
+
+        var stats = _db.GetDashboardStats();
+
+        Assert.NotNull(stats.LastPilotKaios);
+        Assert.Equal("kaios", stats.LastPilotKaios!.DbName);
+        Assert.Equal("alice", stats.LastPilotKaios.ExecutedBy);
+        Assert.Equal(at.ToString("o"), stats.LastPilotKaios.ExecutedAt);
+        Assert.Null(stats.LastPilotGos);
+    }
+
+    [Fact]
+    public void GetDashboardStats_ExcludesRunWithAnyFailure()
+    {
+        var runId = Guid.NewGuid().ToString("n");
+        InsertPilotLog(runId, "kaios", "pilot1", "both", "bob", "success");
+        InsertPilotLog(runId, "kaios", "pilot2", "both", "bob", "failed");
+
+        var stats = _db.GetDashboardStats();
+        Assert.Null(stats.LastPilotKaios);
+    }
+
+    [Fact]
+    public void GetDashboardStats_ExcludesAllDryRunOrSqlSkippedOnly()
+    {
+        var dryRun = Guid.NewGuid().ToString("n");
+        InsertPilotLog(dryRun, "kaios", "pilot1", "both-dryrun", "c", "success");
+        InsertPilotLog(dryRun, "kaios", "sql", "sql-dryrun", "c", "success");
+
+        var skipOnly = Guid.NewGuid().ToString("n");
+        InsertPilotLog(skipOnly, "gos", "sql", "sql-skipped", "d", "success");
+
+        var stats = _db.GetDashboardStats();
+        Assert.Null(stats.LastPilotKaios);
+        Assert.Null(stats.LastPilotGos);
+    }
+
+    [Fact]
+    public void GetDashboardStats_AdoptsBothWithWebSuccessAndSqlSkipped()
+    {
+        // A2: both + Web 成功 + sql-skipped は最終に採用
+        var runId = Guid.NewGuid().ToString("n");
+        var at = DateTime.UtcNow.AddMinutes(-30);
+        InsertPilotLog(runId, "kaios", "pilot1", "both", "eve", "success", at);
+        InsertPilotLog(runId, "kaios", "pilot2", "both", "eve", "success", at);
+        InsertPilotLog(runId, "kaios", "sql", "sql-skipped", "eve", "success", at);
+
+        var stats = _db.GetDashboardStats();
+
+        Assert.NotNull(stats.LastPilotKaios);
+        Assert.Equal("eve", stats.LastPilotKaios!.ExecutedBy);
+    }
+
+    [Fact]
+    public void GetDashboardStats_PilotIsIndependentPerDb_AndUsesLatest()
+    {
+        var oldKaios = Guid.NewGuid().ToString("n");
+        InsertPilotLog(oldKaios, "kaios", "pilot1", "web", "old", "success", DateTime.UtcNow.AddDays(-2));
+
+        var newKaios = Guid.NewGuid().ToString("n");
+        InsertPilotLog(newKaios, "kaios", "pilot1", "web", "new", "success", DateTime.UtcNow.AddHours(-1));
+
+        var gos = Guid.NewGuid().ToString("n");
+        InsertPilotLog(gos, "gos", "sql", "sql", "gos-user", "success", DateTime.UtcNow.AddHours(-3));
+
+        var stats = _db.GetDashboardStats();
+
+        Assert.Equal("new", stats.LastPilotKaios!.ExecutedBy);
+        Assert.Equal("gos-user", stats.LastPilotGos!.ExecutedBy);
+    }
+
+    [Fact]
+    public void GetDashboardStats_ExecutedBy_ComesFromLatestExecutedAtRow_NotLexicalMax()
+    {
+        // 同一 Run 内で ExecutedBy が異なっても、辞書順 MAX（zzz）ではなく最新 ExecutedAt 行の実行者を返す。
+        var runId = Guid.NewGuid().ToString("n");
+        var older = DateTime.UtcNow.AddMinutes(-20);
+        var newer = DateTime.UtcNow.AddMinutes(-5);
+        InsertPilotLog(runId, "kaios", "pilot1", "both", "zzz", "success", older);
+        InsertPilotLog(runId, "kaios", "pilot2", "both", "zzz", "success", older);
+        InsertPilotLog(runId, "kaios", "sql", "sql", "latest-user", "success", newer);
+
+        var stats = _db.GetDashboardStats();
+
+        Assert.NotNull(stats.LastPilotKaios);
+        Assert.Equal("latest-user", stats.LastPilotKaios!.ExecutedBy);
+    }
 }

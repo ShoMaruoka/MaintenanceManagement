@@ -25,6 +25,7 @@ public class WebSourcePrepareController : ControllerBase
     private readonly WebSourceDeployService _deployService;
     private readonly DatabaseService _db;
     private readonly List<DbConfig> _dbConfigs;
+    private readonly bool _dryRun;
 
     public WebSourcePrepareController(
         WebSourceDeployService deployService,
@@ -34,6 +35,7 @@ public class WebSourcePrepareController : ControllerBase
         _deployService = deployService;
         _db = db;
         _dbConfigs = config.GetSection("DbConfigs").Get<List<DbConfig>>() ?? [];
+        _dryRun = config.GetValue<bool>("DryRun");
     }
 
     [HttpGet("{dbName}/info")]
@@ -51,6 +53,10 @@ public class WebSourcePrepareController : ControllerBase
             DbName = config.Name,
             WebSourcePath = config.WebSourcePath,
             CommonImagePath = config.CommonImagePath,
+            DeployedPath = config.DeployedPath,
+            MariaDbDeployedPath = config.MariaDbDeployedPath,
+            FilesPath = config.FilesPath,
+            PilotMariaDbSqlDeployPath = config.PilotMariaDbSqlDeployPath,
             PilotTargets = config.PilotTargets
                 .Select(t => new WebSourcePilotTargetInfo
                 {
@@ -100,15 +106,19 @@ public class WebSourcePrepareController : ControllerBase
 
             foreach (var r in results)
             {
+                var mode = WebSourceDeployLogMode.ResolveLogMode(
+                    step, _dryRun, skipped: false, WebSourceLogRowKind.Web);
                 _db.InsertWebSourceDeployLog(
-                    runId, config.Name, r.TargetName, "full", executedBy,
+                    runId, config.Name, r.TargetName, mode, executedBy,
                     r.Success ? "success" : "failed", r.ErrorMessage);
             }
 
             if (sqlDeploy is not null)
             {
+                var mode = WebSourceDeployLogMode.ResolveLogMode(
+                    step, _dryRun, sqlDeploy.Skipped, WebSourceLogRowKind.Sql);
                 _db.InsertWebSourceDeployLog(
-                    runId, config.Name, "sql", "full", executedBy,
+                    runId, config.Name, "sql", mode, executedBy,
                     sqlDeploy.Success ? "success" : "failed", sqlDeploy.ErrorMessage);
             }
 
@@ -132,7 +142,9 @@ public class WebSourcePrepareController : ControllerBase
         {
             channel.Writer.TryComplete(ex);
             await writeTask;
-            _db.InsertWebSourceDeployLog(runId, config.Name, "-", "full", executedBy, "failed", ex.Message);
+            var mode = WebSourceDeployLogMode.ResolveLogMode(
+                step, _dryRun, skipped: false, WebSourceLogRowKind.Exception);
+            _db.InsertWebSourceDeployLog(runId, config.Name, "-", mode, executedBy, "failed", ex.Message);
         }
     }
 

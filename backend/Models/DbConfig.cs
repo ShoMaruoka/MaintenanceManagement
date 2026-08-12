@@ -75,16 +75,28 @@ public class DbConfig
     public List<PilotTarget> PilotTargets { get; set; } = [];
 
     /// <summary>
-    /// pilot 環境向け SQL 適用フォルダ（配下に "Source"（コピー先）と "deploy.bat"（事前配置・本システムは作成しない）を持つ）。
+    /// pilot 環境向け SQL Server 適用フォルダ（配下に "Source" と "deploy.bat"。本システムは bat を作成しない）。
     /// SQL Server（DB）は pilot1/pilot2 で共有のため、PilotTargets とは別に DB 単位で1パスのみ保持する。
     /// </summary>
     public string PilotSqlDeployPath { get; set; } = "";
 
-    /// <summary>PilotSqlDeployPath 配下の SQL コピー先（Deploy2PrdPath の内容をここへコピーする）。</summary>
+    /// <summary>PilotSqlDeployPath 配下の SQL Server 用コピー先（DeployedPath の *.sql）。</summary>
     public string PilotSqlDeploySourcePath => Path.Combine(PilotSqlDeployPath, "Source");
 
-    /// <summary>PilotSqlDeployPath 配下の適用バッチ（事前配置・本システムは作成しない）。</summary>
+    /// <summary>PilotSqlDeployPath 配下の SQL Server 適用バッチ（事前配置）。</summary>
     public string PilotSqlDeployBatPath => Path.Combine(PilotSqlDeployPath, "deploy.bat");
+
+    /// <summary>
+    /// pilot 環境向け MariaDB 適用フォルダ（配下に "Source" と "deploy.bat"。本システムは bat を作成しない）。
+    /// STG の MariaDbForNewCreationPath と同様、SQL Server 用とは別ツリー（Issue #35 B1）。
+    /// </summary>
+    public string PilotMariaDbSqlDeployPath { get; set; } = "";
+
+    /// <summary>PilotMariaDbSqlDeployPath 配下の MariaDB 用コピー先（MariaDbDeployedPath の *.sql）。</summary>
+    public string PilotMariaDbSqlDeploySourcePath => Path.Combine(PilotMariaDbSqlDeployPath, "Source");
+
+    /// <summary>PilotMariaDbSqlDeployPath 配下の MariaDB 適用バッチ（事前配置）。</summary>
+    public string PilotMariaDbSqlDeployBatPath => Path.Combine(PilotMariaDbSqlDeployPath, "deploy.bat");
 
     // 画像コピー・View DB 名置換（Issue #27）
     /// <summary>STG 側の共通画像フォルダ（コピー元）。未設定時は画像コピーステップをスキップする。</summary>

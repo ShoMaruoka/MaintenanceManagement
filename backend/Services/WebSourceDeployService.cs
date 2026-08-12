@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
@@ -26,13 +25,18 @@ public class WebSourceDeployService
 
     private readonly bool _dryRun;
     private readonly ILogger<WebSourceDeployService> _logger;
+    private readonly IProcessRunner _processRunner;
     private readonly string[] _excludeFiles;
     private readonly string[] _excludeDirs;
 
-    public WebSourceDeployService(IConfiguration config, ILogger<WebSourceDeployService> logger)
+    public WebSourceDeployService(
+        IConfiguration config,
+        ILogger<WebSourceDeployService> logger,
+        IProcessRunner processRunner)
     {
         _dryRun = config.GetValue<bool>("DryRun");
         _logger = logger;
+        _processRunner = processRunner;
 
         var configuredExcludeFiles = config.GetSection("WebSourceDeploy:ExcludeFiles").Get<string[]>();
         var configuredExcludeDirs = config.GetSection("WebSourceDeploy:ExcludeDirs").Get<string[]>();
@@ -111,59 +115,44 @@ public class WebSourceDeployService
             return 1; // 1 = ファイルコピーあり（成功扱い）
         }
 
-        using var proc = new Process();
-        proc.StartInfo = new ProcessStartInfo
-        {
-            FileName = "robocopy.exe",
-            Arguments = args,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            // robocopy は日本語環境では OEM コードページ（Shift-JIS）で出力するため、
-            // 既定の UTF-8 読み取りのままだと文字化けする（DeployService と同様の対処）。
-            StandardOutputEncoding = Encoding.GetEncoding("shift_jis"),
-            StandardErrorEncoding = Encoding.GetEncoding("shift_jis"),
-        };
-
-        proc.OutputDataReceived += (_, e) =>
-        {
-            if (e.Data is not null) onOutputLine(e.Data);
-        };
-        proc.ErrorDataReceived += (_, e) =>
-        {
-            if (e.Data is not null) onOutputLine(e.Data);
-        };
-
-        proc.Start();
-        proc.BeginOutputReadLine();
-        proc.BeginErrorReadLine();
-
-        try
-        {
-            await proc.WaitForExitAsync(ct);
-        }
-        catch (OperationCanceledException)
-        {
-            // キャンセル時に robocopy プロセスを残留させない（ベストエフォート）。
-            TryKillProcess(proc);
-            throw;
-        }
-
-        return proc.ExitCode;
+        return await RunRobocopyProcessAsync(args, onOutputLine, ct);
     }
 
-    private static void TryKillProcess(Process proc)
+    /// <summary>
+    /// Pilot SQL 専用コピー（*.sql のみ）。共通 BuildArguments（Web／画像／Files）には触れない（B1）。
+    /// DryRun 時はプロセスを起動せず引数のみログする（IProcessRunner 注入でも DryRun 不変条件を保つ — PR #37 #4）。
+    /// </summary>
+    internal async Task<int> CopyPilotSqlFilesAsync(
+        string src,
+        string dest,
+        Action<string> onOutputLine,
+        CancellationToken ct)
     {
-        try
+        ValidateDeployPaths(src, dest);
+
+        // ファイルクラス *.sql のみ。/XF /XD は付けない（専用経路）。
+        var args = BuildPilotSqlRobocopyArgs(src, dest);
+
+        if (_dryRun)
         {
-            if (!proc.HasExited) proc.Kill(entireProcessTree: true);
+            onOutputLine($"[DRY-RUN] robocopy {args}");
+            return 1;
         }
-        catch
-        {
-            // ベストエフォート。Kill 自体の失敗でキャンセル処理を止めない。
-        }
+
+        return await RunRobocopyProcessAsync(args, onOutputLine, ct);
     }
+
+    /// <summary>
+    /// Pilot SQL 専用 robocopy 引数（*.sql のみ）。共通 BuildArguments とは分離（PR #37 #3）。
+    /// </summary>
+    internal static string BuildPilotSqlRobocopyArgs(string src, string dest) =>
+        $"\"{src}\" \"{dest}\" *.sql /E /MT:32 /R:2 /W:5 /NP /XX";
+
+    private Task<int> RunRobocopyProcessAsync(
+        string args,
+        Action<string> onOutputLine,
+        CancellationToken ct) =>
+        _processRunner.RunAsync("robocopy.exe", args, workingDirectory: null, onOutputLine, ct);
 
     private string BuildArguments(string src, string dest)
     {
@@ -208,52 +197,126 @@ public class WebSourceDeployService
     }
 
     /// <summary>
-    /// PilotSqlDeployPath\Source を空にしてから Deploy2PrdPath の SQL ファイル一式をコピーし、
-    /// 続けて deploy.bat（事前配置・本システムは作成しない）を引数なし・作業ディレクトリ
-    /// PilotSqlDeployPath で実行する。deploy.bat の標準出力/標準エラーは onOutputLine へ流す。
-    /// PilotSqlDeployPath が未設定の場合は何もせず null を返す（本ステップ自体をスキップ）。
+    /// DeployedPath / MariaDbDeployedPath の *.sql をそれぞれ Pilot SQL Server / Pilot MariaDB の Source へコピーし、
+    /// 対応する deploy.bat（事前配置・本システムは作成しない）を実行する。
+    /// PilotSqlDeployPath と PilotMariaDbSqlDeployPath の両方が未設定の場合は null（本ステップ自体をスキップ）。
+    /// 両ソースに *.sql が無い場合は bat より前に return し Skipped=true（Issue #35）。
+    /// MariaDB は SQL Server Source 配下ではなく別ツリーへコピーし、専用 bat で適用する（B1）。
     /// </summary>
     public async Task<WebSourceSqlDeployResult?> RunSqlDeployAsync(
         DbConfig config,
         Action<string> onOutputLine,
         CancellationToken ct)
     {
-        if (string.IsNullOrWhiteSpace(config.PilotSqlDeployPath))
+        var hasPilotSqlPath = !string.IsNullOrWhiteSpace(config.PilotSqlDeployPath);
+        var hasPilotMariaPath = !string.IsNullOrWhiteSpace(config.PilotMariaDbSqlDeployPath);
+        if (!hasPilotSqlPath && !hasPilotMariaPath)
             return null;
 
-        var sourceDir = config.PilotSqlDeploySourcePath;
+        // 未設定（相対パス等）は空スキップより先にエラー（I1）
+        EnsureAbsoluteSqlSourcePath(config.DeployedPath, "DeployedPath", "DeployDev2StgPath");
+        EnsureAbsoluteSqlSourcePath(config.MariaDbDeployedPath, "MariaDbDeployedPath", "DeployDev2StgPath");
 
-        // 前回実行分の古い SQL が残らないよう、コピー前に Source を空にする。
-        // PilotSqlDeployPath 配下の "Source" 固定パスのみを対象とするため、誤って上位フォルダを
-        // 削除する事故は起きない。
-        if (!_dryRun)
+        var sqlServerSrc = config.DeployedPath;
+        var mariaDbSrc = config.MariaDbDeployedPath;
+        var hasSqlServer = HasSqlFiles(sqlServerSrc);
+        var hasMariaDb = HasSqlFiles(mariaDbSrc);
+
+        // 両空 → bat 存在チェックより前に return（A1）
+        if (!hasSqlServer && !hasMariaDb)
         {
-            if (Directory.Exists(sourceDir))
-                Directory.Delete(sourceDir, recursive: true);
-            Directory.CreateDirectory(sourceDir);
+            onOutputLine("WARN: 適用対象 SQL なし（DeployedPath / MariaDbDeployedPath に *.sql がありません）");
+            return new WebSourceSqlDeployResult(true, null, null, Skipped: true);
+        }
+
+        if (hasSqlServer && !hasPilotSqlPath)
+            throw new InvalidOperationException(
+                "DeployedPath に *.sql がありますが PilotSqlDeployPath が未設定です");
+        if (hasMariaDb && !hasPilotMariaPath)
+            throw new InvalidOperationException(
+                "MariaDbDeployedPath に *.sql がありますが PilotMariaDbSqlDeployPath が未設定です（MariaDB は専用 bat で自動適用します）");
+
+        // Source 初期化（再帰削除）より前に絶対パスを検証（PR #37 N2）
+        if (hasSqlServer)
+            EnsureAbsoluteSqlSourcePath(config.PilotSqlDeploySourcePath, "PilotSqlDeploySourcePath", "PilotSqlDeployPath");
+        if (hasMariaDb)
+            EnsureAbsoluteSqlSourcePath(config.PilotMariaDbSqlDeploySourcePath, "PilotMariaDbSqlDeploySourcePath", "PilotMariaDbSqlDeployPath");
+
+        if (hasSqlServer)
+        {
+            var sourceDir = config.PilotSqlDeploySourcePath;
+            if (!_dryRun)
+            {
+                if (Directory.Exists(sourceDir))
+                    Directory.Delete(sourceDir, recursive: true);
+                Directory.CreateDirectory(sourceDir);
+            }
+            else
+            {
+                onOutputLine($"[DRY-RUN] SQL Server Source フォルダを初期化: {sourceDir}");
+            }
+
+            var copyExitCode = await CopyPilotSqlFilesAsync(sqlServerSrc, sourceDir, onOutputLine, ct);
+            if (!IsRobocopySuccess(copyExitCode))
+                return new WebSourceSqlDeployResult(false, copyExitCode, $"SQL コピーが robocopy エラー終了しました (exit code {copyExitCode})");
         }
         else
         {
-            onOutputLine($"[DRY-RUN] Source フォルダを初期化: {sourceDir}");
+            onOutputLine("INFO: SQL Server deployed に *.sql なし — スキップ");
         }
 
-        var copyExitCode = await RunRobocopyAsync(config.Deploy2PrdPath, sourceDir, onOutputLine, ct);
-        if (!IsRobocopySuccess(copyExitCode))
-            return new WebSourceSqlDeployResult(false, copyExitCode, $"SQL コピーが robocopy エラー終了しました (exit code {copyExitCode})");
+        if (hasMariaDb)
+        {
+            var mariaSourceDir = config.PilotMariaDbSqlDeploySourcePath;
+            if (!_dryRun)
+            {
+                if (Directory.Exists(mariaSourceDir))
+                    Directory.Delete(mariaSourceDir, recursive: true);
+                Directory.CreateDirectory(mariaSourceDir);
+            }
+            else
+            {
+                onOutputLine($"[DRY-RUN] MariaDB Source フォルダを初期化: {mariaSourceDir}");
+            }
 
-        // View ソース内の DB 名置換（Issue #27）。実書き込みはコピー先 Source のみ。
-        // DryRun 時は robocopy が実コピーしないため、プレビューは Deploy2PrdPath を走査する
-        // （dryRun=true なので Deploy2PrdPath 自体は書き換えない）。
+            var copyExitCode = await CopyPilotSqlFilesAsync(mariaDbSrc, mariaSourceDir, onOutputLine, ct);
+            if (!IsRobocopySuccess(copyExitCode))
+                return new WebSourceSqlDeployResult(false, copyExitCode, $"MariaDB SQL コピーが robocopy エラー終了しました (exit code {copyExitCode})");
+        }
+        else
+        {
+            onOutputLine("INFO: MariaDB deployed に *.sql なし — スキップ");
+        }
+
+        // View ソース内の DB 名置換（Issue #27）。DryRun はソース、実実行はコピー先 Source を走査。
+        // 存在する側だけ走査し、無い側の WARN を出さない（PR #37 Nit）。
+        // SQL Server / MariaDB の両 Source に同じルールを適用する（N5）。
+        // 現行ルール（例: KaiosDB→KaiosDB_pilot）は SQL Server 前提のため、MariaDB 側は通常 no-op。
         if (config.PilotSqlDbNameReplacements.Count > 0)
         {
-            var replaceDir = _dryRun ? config.Deploy2PrdPath : sourceDir;
-            onOutputLine($"View DB名置換: 走査対象={replaceDir}{(_dryRun ? "（DryRunプレビュー）" : "")}");
-            var (fileCount, occurrenceCount, skippedCount) = ReplaceViewDbNames(
-                replaceDir, config.PilotSqlDbNameReplacements, _dryRun, onOutputLine);
-            var dryRunTag = _dryRun ? " [DRY-RUN]" : "";
-            onOutputLine($"View DB名置換: {fileCount} ファイル / {occurrenceCount} 箇所 / スキップ {skippedCount} 件{dryRunTag}");
-            if (skippedCount > 0)
-                onOutputLine($"WARN: View DB名置換で {skippedCount} 件スキップしました（エンコーディング判定不可）。該当 View は KaiosDB 参照のまま残る可能性があります");
+            var replaceDirs = new List<string>();
+            if (_dryRun)
+            {
+                if (hasSqlServer) replaceDirs.Add(sqlServerSrc);
+                if (hasMariaDb) replaceDirs.Add(mariaDbSrc);
+            }
+            else
+            {
+                if (hasSqlServer) replaceDirs.Add(config.PilotSqlDeploySourcePath);
+                if (hasMariaDb) replaceDirs.Add(config.PilotMariaDbSqlDeploySourcePath);
+            }
+
+            foreach (var replaceDir in replaceDirs)
+            {
+                var targetLabel = _dryRun ? $"{replaceDir}（DryRunプレビュー）" : replaceDir;
+                onOutputLine($"View DB名置換: 走査対象={targetLabel}");
+                var (fileCount, occurrenceCount, skippedCount) = ReplaceViewDbNames(
+                    replaceDir, config.PilotSqlDbNameReplacements, _dryRun, onOutputLine);
+                var countSuffix = _dryRun ? " [DRY-RUN]" : "";
+                onOutputLine($"View DB名置換: {fileCount} ファイル / {occurrenceCount} 箇所 / スキップ {skippedCount} 件{countSuffix}");
+                if (skippedCount > 0)
+                    onOutputLine($"WARN: View DB名置換で {skippedCount} 件スキップしました（エンコーディング判定不可）。該当 View は KaiosDB 参照のまま残る可能性があります");
+            }
         }
         else
         {
@@ -262,19 +325,62 @@ public class WebSourceDeployService
 
         if (_dryRun)
         {
-            onOutputLine($"[DRY-RUN] deploy.bat 実行: {config.PilotSqlDeployBatPath}");
-            return new WebSourceSqlDeployResult(true, 0, null);
+            if (hasSqlServer)
+                onOutputLine($"[DRY-RUN] SQL Server deploy.bat 実行: {config.PilotSqlDeployBatPath}");
+            if (hasMariaDb)
+                onOutputLine($"[DRY-RUN] MariaDB deploy.bat 実行: {config.PilotMariaDbSqlDeployBatPath}");
+            return new WebSourceSqlDeployResult(true, null, null);
         }
 
-        if (!File.Exists(config.PilotSqlDeployBatPath))
-            return new WebSourceSqlDeployResult(false, null, $"deploy.bat が見つかりません: {config.PilotSqlDeployBatPath}");
+        if (hasSqlServer)
+        {
+            if (!File.Exists(config.PilotSqlDeployBatPath))
+                return new WebSourceSqlDeployResult(false, null, $"SQL Server deploy.bat が見つかりません: {config.PilotSqlDeployBatPath}");
 
-        var batExitCode = await RunDeployBatAsync(config.PilotSqlDeployPath, config.PilotSqlDeployBatPath, onOutputLine, ct);
-        if (batExitCode != 0)
-            return new WebSourceSqlDeployResult(false, batExitCode, $"deploy.bat がエラー終了しました (exit code {batExitCode})");
+            onOutputLine($"SQL Server deploy.bat 実行: {config.PilotSqlDeployBatPath}");
+            var batExitCode = await RunDeployBatAsync(
+                config.PilotSqlDeployPath, config.PilotSqlDeployBatPath, onOutputLine, ct);
+            if (batExitCode != 0)
+                return new WebSourceSqlDeployResult(false, batExitCode, $"SQL Server deploy.bat がエラー終了しました (exit code {batExitCode})");
+        }
 
-        return new WebSourceSqlDeployResult(true, batExitCode, null);
+        if (hasMariaDb)
+        {
+            if (!File.Exists(config.PilotMariaDbSqlDeployBatPath))
+                return new WebSourceSqlDeployResult(false, null, $"MariaDB deploy.bat が見つかりません: {config.PilotMariaDbSqlDeployBatPath}");
+
+            onOutputLine($"MariaDB deploy.bat 実行: {config.PilotMariaDbSqlDeployBatPath}");
+            var batExitCode = await RunDeployBatAsync(
+                config.PilotMariaDbSqlDeployPath, config.PilotMariaDbSqlDeployBatPath, onOutputLine, ct);
+            if (batExitCode != 0)
+                return new WebSourceSqlDeployResult(false, batExitCode, $"MariaDB deploy.bat がエラー終了しました (exit code {batExitCode})");
+        }
+
+        // 成功時 ExitCode は意味を持たない（複数 bat の代表値にならない）ため null（PR #37 N4）
+        return new WebSourceSqlDeployResult(true, null, null);
     }
+
+    /// <summary>
+    /// 未設定・相対パスは設定ミスとしてエラーにする（再帰削除より前に呼ぶ）。
+    /// <paramref name="configKeyHint"/> は運用者が直すべき設定キー（導出プロパティの場合は親キー）。
+    /// </summary>
+    private static void EnsureAbsoluteSqlSourcePath(string path, string label, string configKeyHint)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !Path.IsPathRooted(path))
+            throw new InvalidOperationException(
+                $"{label} が絶対パスとして解決できません（{configKeyHint} の設定を確認してください）: {path}");
+    }
+
+    /// <summary>再帰で *.sql が1件以上あるか（ディレクトリ不存在は空扱い）。</summary>
+    internal static bool HasSqlFiles(string dir) =>
+        Directory.Exists(dir)
+        && Directory.EnumerateFiles(dir, "*.sql", SearchOption.AllDirectories).Any();
+
+    /// <summary>再帰で通常ファイルが1件以上あるか（空カテゴリフォルダのみは空扱い）。</summary>
+    internal static bool HasAnyFiles(string dir) =>
+        Directory.Exists(dir)
+        && Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Any();
+
 
     /// <summary>
     /// CREATE/ALTER VIEW を含む .sql のみを対象に、DB 名参照を置換する（Issue #27）。
@@ -433,53 +539,17 @@ public class WebSourceDeployService
         return false;
     }
 
-    private static async Task<int> RunDeployBatAsync(
+    private Task<int> RunDeployBatAsync(
         string workingDirectory,
         string batPath,
         Action<string> onOutputLine,
         CancellationToken ct)
     {
-        using var proc = new Process();
-        proc.StartInfo = new ProcessStartInfo
-        {
-            FileName = "cmd.exe",
-            // .bat は UseShellExecute=false のまま FileName に直接指定しても起動できないため、
-            // cmd.exe /c 経由で起動する（DeployService.RunBatAsync と同じパターン）。
-            // chcp 932 を先行実行し、bat およびその子プロセスが Shift-JIS で動作するようにする。
-            Arguments = $"/c \"chcp 932 > nul && \"{batPath}\"\"",
-            WorkingDirectory = workingDirectory,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            StandardOutputEncoding = Encoding.GetEncoding("shift_jis"),
-            StandardErrorEncoding = Encoding.GetEncoding("shift_jis"),
-        };
-
-        proc.OutputDataReceived += (_, e) =>
-        {
-            if (e.Data is not null) onOutputLine(e.Data);
-        };
-        proc.ErrorDataReceived += (_, e) =>
-        {
-            if (e.Data is not null) onOutputLine(e.Data);
-        };
-
-        proc.Start();
-        proc.BeginOutputReadLine();
-        proc.BeginErrorReadLine();
-
-        try
-        {
-            await proc.WaitForExitAsync(ct);
-        }
-        catch (OperationCanceledException)
-        {
-            TryKillProcess(proc);
-            throw;
-        }
-
-        return proc.ExitCode;
+        // .bat は UseShellExecute=false のまま FileName に直接指定しても起動できないため、
+        // cmd.exe /c 経由で起動する（DeployService.RunBatAsync と同じパターン）。
+        // chcp 932 を先行実行し、bat およびその子プロセスが Shift-JIS で動作するようにする。
+        var arguments = $"/c \"chcp 932 > nul && \"{batPath}\"\"";
+        return _processRunner.RunAsync("cmd.exe", arguments, workingDirectory, onOutputLine, ct);
     }
 
     /// <summary>
@@ -522,9 +592,7 @@ public class WebSourceDeployService
                 if (onlySqlResult is not null)
                 {
                     LogLine(onlySqlResult.Success ? "OK" : "ERROR",
-                        onlySqlResult.Success
-                            ? "SQL適用: 完了しました"
-                            : $"SQL適用: 失敗しました ({onlySqlResult.ErrorMessage})");
+                        FormatSqlDeployCompletionMessage(onlySqlResult));
                 }
             }
             catch (Exception ex)
@@ -534,11 +602,15 @@ public class WebSourceDeployService
             }
 
             var onlySqlFailed = onlySqlResult is { Success: false };
+            var onlySqlSkipped = onlySqlResult is { Success: true, Skipped: true };
             LogLine(onlySqlFailed ? "ERROR" : "OK",
-                onlySqlFailed ? "❌ Pilot環境適用が中断されました" : "✅ Pilot環境適用が完了しました");
+                FormatOverallCompletionMessage(failed: onlySqlFailed, skippedOnly: onlySqlSkipped));
 
             return (results, onlySqlResult);
         }
+
+        // Files の有無はターゲットループ外で1回判定し再利用する（F2）
+        var filesPathReady = Path.IsPathRooted(config.FilesPath) && HasAnyFiles(config.FilesPath);
 
         foreach (var target in config.PilotTargets)
         {
@@ -561,15 +633,13 @@ public class WebSourceDeployService
 
                 LogLine("OK", $"{target.Name}: robocopy コピー完了 (exit code {exitCode})");
 
-                // FilesDeploy2PrdPath（本番前準備で確定した画像・静的ファイル。Images/news/pdfカテゴリを直下に持つ）が
-                // 設定されていれば、その中身（Images/news/pdf等）を pilot側 Web ソースルート直下へ追加でコピーする
-                // （"Files" というフォルダ名は挟まない。本番側と同じ階層構成に合わせるため）。
-                // WebSourcePath 単体には本番前準備で選定済みの Files 内容が含まれないため、
-                // pilot でも本番同等の画像・静的ファイルを反映するために別ステップとして実行する。
-                if (!string.IsNullOrWhiteSpace(config.FilesDeploy2PrdPath))
+                // FilesPath（STG 適用後の静的ファイル。Images/news/pdf カテゴリを直下に持つ）を
+                // pilot 側 Web ソースルート直下へコピーする（Issue #35: FilesDeploy2PrdPath は使わない）。
+                // ファイル0件（またはパス未解決）はスキップして成功継続。
+                if (filesPathReady)
                 {
                     var filesExitCode = await RunRobocopyAsync(
-                        config.FilesDeploy2PrdPath,
+                        config.FilesPath,
                         target.DestWebSourcePath,
                         line => LogLine("DETAIL", line),
                         ct);
@@ -582,6 +652,10 @@ public class WebSourceDeployService
                     }
 
                     LogLine("OK", $"{target.Name}: Files コピー完了 (exit code {filesExitCode})");
+                }
+                else
+                {
+                    LogLine("INFO", $"{target.Name}: Files コピーをスキップ（FilesPath にファイルなし）");
                 }
 
                 // 共通画像フォルダ → pilot の Images\products（Issue #27）。
@@ -643,9 +717,7 @@ public class WebSourceDeployService
                 if (sqlDeployResult is not null)
                 {
                     LogLine(sqlDeployResult.Success ? "OK" : "ERROR",
-                        sqlDeployResult.Success
-                            ? "SQL適用: 完了しました"
-                            : $"SQL適用: 失敗しました ({sqlDeployResult.ErrorMessage})");
+                        FormatSqlDeployCompletionMessage(sqlDeployResult));
                 }
             }
             catch (Exception ex)
@@ -655,11 +727,28 @@ public class WebSourceDeployService
             }
         }
 
+        // Both で Web 成功＋SQL スキップのみのときは Web 適用済みのため「完了」。SqlOnly スキップは別経路。
         LogLine(failed ? "ERROR" : "OK",
-            failed ? "❌ Pilot環境適用が中断されました" : "✅ Pilot環境適用が完了しました");
+            FormatOverallCompletionMessage(failed: failed, skippedOnly: false));
 
         return (results, sqlDeployResult);
     }
+
+    private static string FormatSqlDeployCompletionMessage(WebSourceSqlDeployResult sqlDeploy) =>
+        sqlDeploy.Skipped
+            ? "SQL適用: スキップ（適用対象 SQL なし）"
+            : sqlDeploy.Success
+                ? "SQL適用: 完了しました"
+                : $"SQL適用: 失敗しました ({sqlDeploy.ErrorMessage})";
+
+    /// <summary>全体サマリ。SqlOnly＋スキップ時は「完了」と誤読されない文言にする（PR #37 Consider）。</summary>
+    internal static string FormatOverallCompletionMessage(bool failed, bool skippedOnly) =>
+        failed
+            ? "❌ Pilot環境適用が中断されました"
+            : skippedOnly
+                ? "⏭ Pilot環境適用をスキップしました（適用対象なし）"
+                : "✅ Pilot環境適用が完了しました";
+
 
     private static string DescribeStep(WebSourceDeployStep step) => step switch
     {
@@ -685,7 +774,8 @@ public class WebSourceDeployService
 public record WebSourceDeployTargetResult(string TargetName, bool Success, string? ErrorMessage);
 
 /// <summary>SQL適用（PilotSqlDeployPath への SQL コピー＋deploy.bat 実行）の結果。</summary>
-public record WebSourceSqlDeployResult(bool Success, int? ExitCode, string? ErrorMessage);
+/// <param name="Skipped">適用対象 *.sql が無く処理をスキップした場合 true（Result は success 相当）。</param>
+public record WebSourceSqlDeployResult(bool Success, int? ExitCode, string? ErrorMessage, bool Skipped = false);
 
 /// <summary>「Pilot環境適用」実行時にどのステップを実行するか（前回失敗した側だけの再実行に対応するため）。</summary>
 public enum WebSourceDeployStep

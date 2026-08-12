@@ -89,6 +89,28 @@ export default function Dashboard() {
               : 'なし'}
           </div>
         </div>
+        <div className="stat-card">
+          <div className="stat-card-label">Pilot 最終適用（kaios）</div>
+          <div className="stat-card-value">
+            {stats?.lastPilotKaios ? formatDateTime(stats.lastPilotKaios.executedAt) : '—'}
+          </div>
+          <div className="stat-card-sub" style={{ color: '#8a9099' }}>
+            {stats?.lastPilotKaios
+              ? `実行者: ${stats.lastPilotKaios.executedBy}`
+              : '実行履歴なし'}
+          </div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-card-label">Pilot 最終適用（gos）</div>
+          <div className="stat-card-value">
+            {stats?.lastPilotGos ? formatDateTime(stats.lastPilotGos.executedAt) : '—'}
+          </div>
+          <div className="stat-card-sub" style={{ color: '#8a9099' }}>
+            {stats?.lastPilotGos
+              ? `実行者: ${stats.lastPilotGos.executedBy}`
+              : '実行履歴なし'}
+          </div>
+        </div>
       </div>
 
       <div className="table-container">

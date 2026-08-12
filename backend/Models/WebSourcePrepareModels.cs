@@ -14,6 +14,14 @@ public class WebSourceInfoResponse
     public string WebSourcePath { get; set; } = "";
     /// <summary>STG 側の共通画像フォルダ。未設定時は空文字。</summary>
     public string CommonImagePath { get; set; } = "";
+    /// <summary>STG 適用後の SQL Server deployed（Issue #35）。</summary>
+    public string DeployedPath { get; set; } = "";
+    /// <summary>STG 適用後の MariaDB deployed（Issue #35）。</summary>
+    public string MariaDbDeployedPath { get; set; } = "";
+    /// <summary>STG 側静的ファイル（DeployDev2StgPath\Files）（Issue #35）。</summary>
+    public string FilesPath { get; set; } = "";
+    /// <summary>Pilot MariaDB 適用ルート（未設定時は空。Issue #35 B1）。</summary>
+    public string PilotMariaDbSqlDeployPath { get; set; } = "";
     public List<WebSourcePilotTargetInfo> PilotTargets { get; set; } = [];
 }
 

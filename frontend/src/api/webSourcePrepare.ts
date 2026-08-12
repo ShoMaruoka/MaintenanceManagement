@@ -13,6 +13,11 @@ export interface ApiWebSourceInfo {
   dbName: string
   webSourcePath: string
   commonImagePath: string
+  deployedPath: string
+  mariaDbDeployedPath: string
+  filesPath: string
+  /** Pilot MariaDB 適用ルート。未設定時は空（Issue #35 B1） */
+  pilotMariaDbSqlDeployPath: string
   pilotTargets: ApiWebSourcePilotTargetInfo[]
 }
 
@@ -33,6 +38,7 @@ export interface ApiWebSourceSqlDeployResult {
   success: boolean
   exitCode?: number | null
   errorMessage?: string | null
+  skipped?: boolean
 }
 
 export interface ApiWebSourceDeployDone {

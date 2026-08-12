@@ -87,9 +87,18 @@ export interface ProductionReadyLog {
   result: string
 }
 
+/** Pilot 最終適用の要約（GET /api/history/stats）。 */
+export interface PilotDeploySummary {
+  dbName: string
+  executedAt: string
+  executedBy: string
+}
+
 /** ダッシュボード上部のサマリーカード用の集計値（GET /api/history/stats）。 */
 export interface DashboardStats {
   lastPrepare: ProductionReadyLog | null
+  lastPilotKaios: PilotDeploySummary | null
+  lastPilotGos: PilotDeploySummary | null
   days: number
   totalSessions: number
   successSessions: number
