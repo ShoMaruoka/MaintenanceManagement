@@ -22,9 +22,9 @@
 
 | # | ファイル | 記述 |
 |---|---------|------|
-| 1 | `backend/MaintenanceManagement.Api.csproj` | `<Version>1.5.0</Version>` |
-| 2 | `frontend/package.json` | `"version": "1.5.0"` |
-| 3 | Git タグ | `v1.5.0`（`v` プレフィックス付き） |
+| 1 | `backend/MaintenanceManagement.Api.csproj` | `<Version>1.5.1</Version>` |
+| 2 | `frontend/package.json` | `"version": "1.5.1"` |
+| 3 | Git タグ | `v1.5.1`（`v` プレフィックス付き） |
 
 `frontend/vite.config.ts` は `package.json` の値を `__APP_VERSION__` としてビルド時に埋め込むため、
 フロント側で版番号を直接書く必要はない。
