@@ -184,6 +184,14 @@ input {
   background: #3fb27f;
 }
 
+.sidebar-info-dot.failed {
+  background: #c5283d;
+}
+
+.sidebar-info-dot.muted {
+  background: #5a6270;
+}
+
 .sidebar-info-status-text {
   font-size: 10.5px;
   color: #9aa0a8;

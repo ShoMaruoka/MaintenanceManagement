@@ -6,6 +6,7 @@ import type {
   PilotRunDetail,
   PilotRunSummary,
   PilotRunTarget,
+  ProductionReadyLog,
 } from '../types'
 
 interface ApiDeploySession {
@@ -62,6 +63,16 @@ export async function getPilotRuns(limit: number = 100): Promise<PilotRunSummary
 export async function getPilotRun(runId: string): Promise<PilotRunDetail> {
   const run = await fetchJson<ApiPilotRunDetail>(`/history/pilot-runs/${encodeURIComponent(runId)}`)
   return formatPilotRunDetail(run)
+}
+
+/** 本番前準備の実行内容を「適用12 · 保留3 · 手動2」形式にまとめる。 */
+export function formatPrepareSummary(
+  log: Pick<ProductionReadyLog, 'appliedFiles' | 'heldFiles' | 'manualFiles'>,
+): string {
+  const parts = [`適用${log.appliedFiles}`]
+  if (log.heldFiles > 0) parts.push(`保留${log.heldFiles}`)
+  if (log.manualFiles > 0) parts.push(`手動${log.manualFiles}`)
+  return parts.join(' · ')
 }
 
 /** ISO 8601 (UTC) を「MM/DD HH:mm」（ローカル時刻）に整形する。 */

@@ -1,7 +1,9 @@
 import { useEffect, useState } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { useUser } from '../context/UserContext'
+import { formatDateTime, formatPrepareSummary, getDashboardStats } from '../api/history'
 import { getApiVersion } from '../api/version'
+import type { ProductionReadyLog } from '../types'
 
 const NAV_ITEMS = [
   {
@@ -89,10 +91,16 @@ type ApiVersionState =
   | { status: 'ok'; version: string }
   | { status: 'error' }
 
+type LastPrepareState =
+  | { status: 'loading' }
+  | { status: 'ok'; log: ProductionReadyLog | null }
+
 export default function Sidebar() {
   const { currentUser, currentRole, clearUser } = useUser()
   const navigate = useNavigate()
+  const location = useLocation()
   const [apiVersion, setApiVersion] = useState<ApiVersionState>({ status: 'loading' })
+  const [lastPrepare, setLastPrepare] = useState<LastPrepareState>({ status: 'loading' })
 
   useEffect(() => {
     let cancelled = false
@@ -107,6 +115,21 @@ export default function Sidebar() {
       cancelled = true
     }
   }, [])
+
+  // 画面遷移のたびに取り直す。本番前準備の直後にダッシュボードへ戻っても古い値が残らないようにする。
+  useEffect(() => {
+    let cancelled = false
+    getDashboardStats(30)
+      .then((stats) => {
+        if (!cancelled) setLastPrepare({ status: 'ok', log: stats.lastPrepare ?? null })
+      })
+      .catch(() => {
+        if (!cancelled) setLastPrepare({ status: 'ok', log: null })
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [location.pathname])
 
   // フロントとバックエンドが別々に配信されるため、片方だけ古い状態が起こり得る。
   // 一致していれば控えめに、食い違ったら警告色で明示する。
@@ -127,6 +150,17 @@ export default function Sidebar() {
   }
 
   const avatarChar = currentUser ? currentUser.charAt(0).toUpperCase() : '?'
+
+  const prepareLog = lastPrepare.status === 'ok' ? lastPrepare.log : null
+  const prepareDateText = prepareLog ? formatDateTime(prepareLog.executedAt) : '—'
+  const prepareStatusText = prepareLog
+    ? `${prepareLog.result === 'success' ? '成功' : '失敗'} · ${formatPrepareSummary(prepareLog)}`
+    : lastPrepare.status === 'loading'
+      ? '読み込み中'
+      : '実行履歴なし'
+  const prepareDotModifier = prepareLog
+    ? (prepareLog.result === 'success' ? '' : ' failed')
+    : ' muted'
 
   return (
     <aside className="sidebar">
@@ -181,10 +215,10 @@ export default function Sidebar() {
 
       <div className="sidebar-info-card">
         <div className="sidebar-info-label">本番前準備 最終実行</div>
-        <div className="sidebar-info-value">2026-06-12 03:00</div>
+        <div className="sidebar-info-value">{prepareDateText}</div>
         <div className="sidebar-info-status">
-          <span className="sidebar-info-dot" />
-          <span className="sidebar-info-status-text">成功 ・ BATCH</span>
+          <span className={`sidebar-info-dot${prepareDotModifier}`} />
+          <span className="sidebar-info-status-text">{prepareStatusText}</span>
         </div>
       </div>
 

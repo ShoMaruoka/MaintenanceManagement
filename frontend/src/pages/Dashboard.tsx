@@ -2,18 +2,10 @@ import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import StatusBadge from '../components/StatusBadge'
 import { SessionDetailTable } from '../components/SessionDetailTable'
-import { formatDateTime, getDashboardStats, getSessions } from '../api/history'
+import { formatDateTime, formatPrepareSummary, getDashboardStats, getSessions } from '../api/history'
 import type { DashboardStats, DeploySession } from '../types'
 
 const MONO = "'JetBrains Mono', monospace"
-
-/** 本番前準備の実行内容を「適用12 · 保留3 · 手動2」形式にまとめる。 */
-function formatPrepareSummary(log: NonNullable<DashboardStats['lastPrepare']>): string {
-  const parts = [`適用${log.appliedFiles}`]
-  if (log.heldFiles > 0) parts.push(`保留${log.heldFiles}`)
-  if (log.manualFiles > 0) parts.push(`手動${log.manualFiles}`)
-  return parts.join(' · ')
-}
 
 export default function Dashboard() {
   const [sessions, setSessions] = useState<DeploySession[]>([])
