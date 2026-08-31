@@ -46,4 +46,19 @@ public class HistoryController : ControllerBase
         var logs = _db.GetRecentPrepLogs(limit);
         return Ok(logs);
     }
+
+    [HttpGet("pilot-runs")]
+    public IActionResult GetPilotRuns([FromQuery] int limit = 100)
+    {
+        limit = Math.Clamp(limit, 1, 500);
+        return Ok(_db.GetRecentPilotRuns(limit));
+    }
+
+    [HttpGet("pilot-runs/{runId}")]
+    public IActionResult GetPilotRun(string runId)
+    {
+        var run = _db.GetPilotRunById(runId);
+        if (run is null) return NotFound();
+        return Ok(run);
+    }
 }

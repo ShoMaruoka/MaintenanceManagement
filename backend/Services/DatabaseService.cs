@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using MaintenanceManagement.Api.Controllers;
 using MaintenanceManagement.Api.Models;
 
 namespace MaintenanceManagement.Api.Services;
@@ -523,6 +524,116 @@ public class DatabaseService
             ExecutedAt = reader.GetString(0),
             ExecutedBy = reader.GetString(1),
         };
+    }
+
+    public List<PilotRunSummary> GetRecentPilotRuns(int limit = 100)
+    {
+        var rows = LoadPilotLogRows(includeLogDetail: false);
+        return rows
+            .GroupBy(r => r.RunId, StringComparer.Ordinal)
+            .Select(g => ToPilotRunSummary(g.ToList()))
+            .OrderByDescending(r => r.ExecutedAt, StringComparer.Ordinal)
+            .ThenByDescending(r => r.RunId, StringComparer.Ordinal)
+            .Take(limit)
+            .ToList();
+    }
+
+    public PilotRunDetail? GetPilotRunById(string runId)
+    {
+        var rows = LoadPilotLogRows(includeLogDetail: true, runId);
+        if (rows.Count == 0)
+            return null;
+
+        var summary = ToPilotRunSummary(rows);
+        return new PilotRunDetail
+        {
+            RunId = summary.RunId,
+            DbName = summary.DbName,
+            ExecutedAt = summary.ExecutedAt,
+            ExecutedBy = summary.ExecutedBy,
+            StepLabel = summary.StepLabel,
+            Result = summary.Result,
+            Summary = summary.Summary,
+            Targets = rows
+                .OrderBy(r => r.LogId)
+                .Select(r => new PilotRunTarget
+                {
+                    TargetName = r.TargetName,
+                    Result = r.Result,
+                    Mode = r.Mode,
+                })
+                .ToList(),
+            LogDetail = rows.Select(r => r.LogDetail).FirstOrDefault(s => !string.IsNullOrEmpty(s)),
+        };
+    }
+
+    private List<PilotLogRow> LoadPilotLogRows(bool includeLogDetail, string? runId = null)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        var logCol = includeLogDetail ? "LogDetail" : "NULL AS LogDetail";
+        cmd.CommandText = $"""
+            SELECT LogId, RunId, DbName, TargetName, Mode, ExecutedBy, ExecutedAt, Result, {logCol}
+            FROM WebSourceDeployLog
+            """;
+        if (runId is not null)
+        {
+            cmd.CommandText += " WHERE RunId = $runId";
+            cmd.Parameters.AddWithValue("$runId", runId);
+        }
+
+        cmd.CommandText += " ORDER BY LogId";
+
+        var rows = new List<PilotLogRow>();
+        using var reader = cmd.ExecuteReader();
+        while (reader.Read())
+        {
+            rows.Add(new PilotLogRow
+            {
+                LogId = reader.GetInt64(0),
+                RunId = reader.GetString(1),
+                DbName = reader.GetString(2),
+                TargetName = reader.GetString(3),
+                Mode = reader.GetString(4),
+                ExecutedBy = reader.GetString(5),
+                ExecutedAt = reader.GetString(6),
+                Result = reader.GetString(7),
+                LogDetail = reader.IsDBNull(8) ? null : reader.GetString(8),
+            });
+        }
+        return rows;
+    }
+
+    private static PilotRunSummary ToPilotRunSummary(List<PilotLogRow> rows)
+    {
+        var oldest = rows
+            .OrderBy(r => r.ExecutedAt, StringComparer.Ordinal)
+            .ThenBy(r => r.LogId)
+            .First();
+        var ordered = rows.OrderBy(r => r.LogId).ToList();
+        return new PilotRunSummary
+        {
+            RunId = oldest.RunId,
+            DbName = oldest.DbName,
+            ExecutedAt = oldest.ExecutedAt,
+            ExecutedBy = oldest.ExecutedBy,
+            StepLabel = PilotRunStepLabel.FromModes(ordered.Select(r => r.Mode)),
+            Result = ordered.Any(r => r.Result.Equals("failed", StringComparison.Ordinal)) ? "failed" : "success",
+            Summary = PilotRunStepLabel.BuildSummary(ordered.Select(r => (r.TargetName, r.Result, r.Mode))),
+        };
+    }
+
+    private sealed class PilotLogRow
+    {
+        public long LogId { get; init; }
+        public string RunId { get; init; } = "";
+        public string DbName { get; init; } = "";
+        public string TargetName { get; init; } = "";
+        public string Mode { get; init; } = "";
+        public string ExecutedBy { get; init; } = "";
+        public string ExecutedAt { get; init; } = "";
+        public string Result { get; init; } = "";
+        public string? LogDetail { get; init; }
     }
 
     private SqliteConnection OpenConnection()

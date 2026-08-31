@@ -431,6 +431,37 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
         Assert.Contains(messages, m => m.Contains("SQL適用: スキップ（適用対象 SQL なし）", StringComparison.Ordinal));
     }
 
+    private static List<(string Src, string Dest)> ParseDryRunCopies(IEnumerable<string> messages)
+    {
+        var result = new List<(string, string)>();
+        foreach (var m in messages)
+        {
+            if (!m.Contains("[DRY-RUN] robocopy", StringComparison.Ordinal))
+                continue;
+            var matches = Regex.Matches(m, "\"([^\"]+)\"");
+            if (matches.Count < 2)
+                continue;
+            result.Add((matches[0].Groups[1].Value, matches[1].Groups[1].Value));
+        }
+        return result;
+    }
+
+    private static bool SamePath(string a, string b) =>
+        string.Equals(Path.GetFullPath(a), Path.GetFullPath(b), StringComparison.OrdinalIgnoreCase);
+
+    private async Task<(List<string> Messages, IReadOnlyList<WebSourceDeployTargetResult> Targets)> RunWebOnlyDryRun(
+        DbConfig config)
+    {
+        var channel = Channel.CreateUnbounded<LogEntry>();
+        var (svc, _) = CreateService(dryRun: true);
+        var (targets, _) = await svc.ExecuteAsync(config, channel.Writer, CancellationToken.None, WebSourceDeployStep.WebOnly);
+        channel.Writer.Complete();
+        var messages = new List<string>();
+        await foreach (var e in channel.Reader.ReadAllAsync())
+            messages.Add(e.Message);
+        return (messages, targets);
+    }
+
     [Fact]
     public async Task ExecuteAsync_Files_UsesFilesPath_SkipsWhenEmpty()
     {
@@ -453,27 +484,19 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
         ];
         WriteSql(config.DeployedPath, "a.sql");
 
-        var channel = Channel.CreateUnbounded<LogEntry>();
-        var (svc, _) = CreateService(dryRun: true);
-
-        var (targets, _) = await svc.ExecuteAsync(config, channel.Writer, CancellationToken.None, WebSourceDeployStep.WebOnly);
-        channel.Writer.Complete();
-
-        var messages = new List<string>();
-        await foreach (var e in channel.Reader.ReadAllAsync())
-            messages.Add(e.Message);
+        var (messages, targets) = await RunWebOnlyDryRun(config);
+        var copies = ParseDryRunCopies(messages);
 
         Assert.True(targets.All(t => t.Success));
-        Assert.DoesNotContain(messages, m =>
-            m.Contains("[DRY-RUN] robocopy", StringComparison.Ordinal)
-            && m.Contains(config.FilesDeploy2PrdPath, StringComparison.OrdinalIgnoreCase));
-        Assert.DoesNotContain(messages, m =>
-            m.Contains("[DRY-RUN] robocopy", StringComparison.Ordinal)
-            && m.Contains(config.FilesPath, StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(copies, c =>
+            c.Src.Contains(config.FilesDeploy2PrdPath, StringComparison.OrdinalIgnoreCase)
+            || c.Dest.Contains(config.FilesDeploy2PrdPath, StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(copies, c => SamePath(c.Src, config.FilesPath));
+        Assert.Contains(messages, m => m.Contains("画像情報準備の適用対象なし", StringComparison.Ordinal));
     }
 
     [Fact]
-    public async Task ExecuteAsync_Files_CopiesWhenFilesExist()
+    public async Task ExecuteAsync_ImagePrepare_CopiesCategoryToDestWebSourcePath()
     {
         var webSrc = Path.Combine(_root, "WebSrc3");
         var pilot1 = Path.Combine(_root, "pilot1c");
@@ -485,25 +508,61 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
         config.WebSourcePath = webSrc;
         Directory.CreateDirectory(Path.Combine(config.FilesPath, "Images"));
         File.WriteAllText(Path.Combine(config.FilesPath, "Images", "a.png"), "x");
+        Directory.CreateDirectory(Path.Combine(config.FilesPath, "news"));
         config.PilotTargets =
         [
             new PilotTarget { Name = "pilot1", DestWebSourcePath = pilot1, DestImagePath = "" },
         ];
 
-        var channel = Channel.CreateUnbounded<LogEntry>();
-        var (svc, _) = CreateService(dryRun: true);
-
-        var (targets, _) = await svc.ExecuteAsync(config, channel.Writer, CancellationToken.None, WebSourceDeployStep.WebOnly);
-        channel.Writer.Complete();
-
-        var messages = new List<string>();
-        await foreach (var e in channel.Reader.ReadAllAsync())
-            messages.Add(e.Message);
+        var (messages, targets) = await RunWebOnlyDryRun(config);
+        var copies = ParseDryRunCopies(messages);
 
         Assert.True(targets.Single().Success);
+        Assert.Contains(copies, c =>
+            SamePath(c.Src, Path.Combine(config.FilesPath, "Images"))
+            && SamePath(c.Dest, Path.Combine(pilot1, "Images")));
+        Assert.DoesNotContain(copies, c => SamePath(c.Src, config.FilesPath));
+        Assert.DoesNotContain(copies, c =>
+            SamePath(c.Src, Path.Combine(config.FilesPath, "news"))
+            || SamePath(c.Src, Path.Combine(config.FilesPath, "pdf")));
         Assert.Contains(messages, m =>
-            m.Contains("[DRY-RUN] robocopy", StringComparison.Ordinal)
-            && m.Contains(config.FilesPath, StringComparison.OrdinalIgnoreCase));
+            m.Contains("news", StringComparison.Ordinal) && m.Contains("スキップ", StringComparison.Ordinal));
+        Assert.Contains(messages, m =>
+            m.Contains("pdf", StringComparison.Ordinal) && m.Contains("スキップ", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_ImagePrepare_KeepsCommonImageCopyUnchanged()
+    {
+        var webSrc = Path.Combine(_root, "WebSrc4");
+        var pilot1 = Path.Combine(_root, "pilot1d");
+        var common = Path.Combine(_root, "Common_Image");
+        var destImage = Path.Combine(pilot1, "Images", "products");
+        Directory.CreateDirectory(webSrc);
+        Directory.CreateDirectory(pilot1);
+        Directory.CreateDirectory(common);
+        File.WriteAllText(Path.Combine(webSrc, "Web.config.DC.kaios.pilot"), "<configuration />");
+        File.WriteAllText(Path.Combine(common, "shared.png"), "x");
+
+        var config = CreateConfig();
+        config.WebSourcePath = webSrc;
+        config.CommonImagePath = common;
+        Directory.CreateDirectory(Path.Combine(config.FilesPath, "Images"));
+        File.WriteAllText(Path.Combine(config.FilesPath, "Images", "a.png"), "x");
+        config.PilotTargets =
+        [
+            new PilotTarget { Name = "pilot1", DestWebSourcePath = pilot1, DestImagePath = destImage },
+        ];
+
+        var (messages, targets) = await RunWebOnlyDryRun(config);
+        var copies = ParseDryRunCopies(messages);
+
+        Assert.True(targets.Single().Success);
+        Assert.Contains(copies, c => SamePath(c.Src, common) && SamePath(c.Dest, destImage));
+        Assert.Contains(copies, c =>
+            SamePath(c.Src, Path.Combine(config.FilesPath, "Images"))
+            && SamePath(c.Dest, Path.Combine(pilot1, "Images")));
+        Assert.Contains(messages, m => m.Contains("画像コピー開始", StringComparison.Ordinal));
     }
 
     [Fact]

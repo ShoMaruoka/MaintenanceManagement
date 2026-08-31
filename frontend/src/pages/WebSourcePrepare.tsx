@@ -126,9 +126,9 @@ export default function WebSourcePrepare() {
 
   if (pageState === 'running' || pageState === 'done') {
     return (
-      <div>
-        <div style={{ background: '#fff', border: '1px solid #e4e6ea', borderRadius: 8, overflow: 'hidden', marginBottom: 14 }}>
-          <div style={{ padding: '11px 16px', borderBottom: '1px solid #eef0f2', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div className="pilot-run-log-page">
+        <div className="pilot-run-log-card">
+          <div style={{ padding: '11px 16px', borderBottom: '1px solid #eef0f2', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
             <span style={{ fontSize: 12.5, fontWeight: 600 }}>
               Pilot環境適用 実行ログ（{dbName}）
               {pageState === 'running' && currentTarget && (
@@ -151,7 +151,7 @@ export default function WebSourcePrepare() {
               {pageState === 'running' ? '実行中' : (result?.success ? '完了' : '失敗')}
             </span>
           </div>
-          <div ref={logRef} style={{ background: '#16181d', padding: '14px 18px', minHeight: 240, maxHeight: 400, overflowY: 'auto', fontFamily: "'JetBrains Mono', monospace", fontSize: 11.5, lineHeight: 1.85 }}>
+          <div ref={logRef} className="pilot-run-log-body">
             {logLines.map((line, i) => (
               <div key={i} style={{
                 color: line.level === 'OK'   ? '#5ec48c'
@@ -170,46 +170,48 @@ export default function WebSourcePrepare() {
           </div>
         </div>
 
-        {pageState === 'done' && result && (
-          <div style={{ background: '#fff', border: '1px solid #e4e6ea', borderRadius: 8, padding: '12px 16px', marginBottom: 14 }}>
-            <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 8 }}>ターゲット別結果</div>
-            {result.targets.map(t => (
-              <div key={t.targetName} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '4px 0' }}>
-                <span style={{ color: t.success ? '#22a06b' : '#c5283d' }}>{t.success ? '✓' : '✗'}</span>
-                <span style={{ fontWeight: 600 }}>{t.targetName}</span>
-                {!t.success && t.errorMessage && (
-                  <span style={{ color: '#c5283d' }}>{t.errorMessage}</span>
-                )}
-              </div>
-            ))}
-            {result.sqlDeploy && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '4px 0', borderTop: '1px solid #eef0f2', marginTop: 6, paddingTop: 8 }}>
-                <span style={{ color: result.sqlDeploy.skipped ? '#b25e09' : result.sqlDeploy.success ? '#22a06b' : '#c5283d' }}>
-                  {result.sqlDeploy.skipped ? '–' : result.sqlDeploy.success ? '✓' : '✗'}
-                </span>
-                <span style={{ fontWeight: 600 }}>SQL適用</span>
-                {result.sqlDeploy.skipped ? (
-                  <span style={{ color: '#b25e09' }}>スキップ</span>
-                ) : (
-                  !result.sqlDeploy.success && result.sqlDeploy.errorMessage && (
-                    <span style={{ color: '#c5283d' }}>{result.sqlDeploy.errorMessage}</span>
-                  )
+        {pageState === 'done' && (
+          <div className="pilot-run-log-extras">
+            {result && (
+              <div style={{ background: '#fff', border: '1px solid #e4e6ea', borderRadius: 8, padding: '12px 16px', marginBottom: 14 }}>
+                <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 8 }}>ターゲット別結果</div>
+                {result.targets.map(t => (
+                  <div key={t.targetName} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '4px 0' }}>
+                    <span style={{ color: t.success ? '#22a06b' : '#c5283d' }}>{t.success ? '✓' : '✗'}</span>
+                    <span style={{ fontWeight: 600 }}>{t.targetName}</span>
+                    {!t.success && t.errorMessage && (
+                      <span style={{ color: '#c5283d' }}>{t.errorMessage}</span>
+                    )}
+                  </div>
+                ))}
+                {result.sqlDeploy && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '4px 0', borderTop: '1px solid #eef0f2', marginTop: 6, paddingTop: 8 }}>
+                    <span style={{ color: result.sqlDeploy.skipped ? '#b25e09' : result.sqlDeploy.success ? '#22a06b' : '#c5283d' }}>
+                      {result.sqlDeploy.skipped ? '–' : result.sqlDeploy.success ? '✓' : '✗'}
+                    </span>
+                    <span style={{ fontWeight: 600 }}>SQL適用</span>
+                    {result.sqlDeploy.skipped ? (
+                      <span style={{ color: '#b25e09' }}>スキップ</span>
+                    ) : (
+                      !result.sqlDeploy.success && result.sqlDeploy.errorMessage && (
+                        <span style={{ color: '#c5283d' }}>{result.sqlDeploy.errorMessage}</span>
+                      )
+                    )}
+                  </div>
                 )}
               </div>
             )}
-          </div>
-        )}
 
-        {pageState === 'done' && error && (
-          <div style={{ marginBottom: 14, padding: '10px 14px', background: '#fbe6e6', border: '1px solid #f0cccc', borderRadius: 7, fontSize: 12, color: '#c5283d' }}>
-            エラー: {error}
-          </div>
-        )}
+            {error && (
+              <div style={{ marginBottom: 14, padding: '10px 14px', background: '#fbe6e6', border: '1px solid #f0cccc', borderRadius: 7, fontSize: 12, color: '#c5283d' }}>
+                エラー: {error}
+              </div>
+            )}
 
-        {pageState === 'done' && (
-          <button className="btn-secondary" onClick={backToSelect}>
-            ← Pilot環境適用画面に戻る
-          </button>
+            <button className="btn-secondary" onClick={backToSelect}>
+              ← Pilot環境適用画面に戻る
+            </button>
+          </div>
         )}
       </div>
     )
@@ -219,7 +221,9 @@ export default function WebSourcePrepare() {
     <div>
       <div style={{ marginBottom: 16, fontSize: 12, color: '#6b7280', lineHeight: 1.6 }}>
         STG サーバーの Web ソース（公開フォルダ）を pilot1 → pilot2 の順に自動でコピーします（削除同期なしの全量コピーのみ）。
-        続けて共通画像フォルダを各 pilot の Images\products へコピーし、各 pilot 側でパイロット用 Web.config（例: Web.config.DC.kaios.pilot）を web.config として適用します。
+        続けて画像情報準備の Images / news / pdf を、各 pilot の Web ルート直下の同名フォルダへコピーします。
+        共通画像フォルダは別系統で、各 pilot の Images\products へコピーします。
+        各 pilot 側でパイロット用 Web.config（例: Web.config.DC.kaios.pilot）を web.config として適用します。
         pilot1 が失敗した場合、pilot2 は実行されません。
         すべて成功した場合、続けて SQL ファイルの pilot 環境への適用（コピー＋View DB名置換＋deploy.bat実行）を行います。
       </div>
@@ -249,17 +253,17 @@ export default function WebSourcePrepare() {
             <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>コピー元・コピー先</div>
             <div style={{ fontSize: 11.5, fontFamily: "'JetBrains Mono', monospace", background: '#f6f7f9', borderRadius: 6, padding: '10px 12px', lineHeight: 1.9 }}>
               <div>STG: {info.webSourcePath}</div>
-              <div>共通画像: {info.commonImagePath || '未設定（スキップ）'}</div>
+              <div>画像情報準備 Files: {info.filesPath}（Images / news / pdf → Web ルート同名フォルダ）</div>
+              <div>共通画像: {info.commonImagePath || '未設定（スキップ）'}（→ Images\products）</div>
               <div>deployed: {info.deployedPath}</div>
               <div>MariaDB deployed: {info.mariaDbDeployedPath}</div>
-              <div>Files: {info.filesPath}</div>
               <div>Pilot SQL Server 適用: {info.pilotSqlDeployPath || '未設定'}</div>
               <div>Pilot MariaDB 適用: {info.pilotMariaDbSqlDeployPath || '未設定'}</div>
               {info.pilotTargets.map(t => (
                 <div key={t.name}>
                   <div>{t.name}: {t.destWebSourcePath}</div>
                   <div style={{ paddingLeft: 12, color: '#6b7280' }}>
-                    画像: {t.destImagePath || '未設定（スキップ）'}
+                    共通画像: {t.destImagePath || '未設定（スキップ）'}
                   </div>
                 </div>
               ))}

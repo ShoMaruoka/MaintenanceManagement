@@ -1920,6 +1920,59 @@ input {
   word-break: break-all;
 }
 
+.log-detail-full-log-pilot {
+  max-height: min(70vh, 720px);
+}
+
+.pilot-run-log-page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 52px - 40px);
+  min-height: 0;
+}
+
+.pilot-run-log-card {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  background: #fff;
+  border: 1px solid #e4e6ea;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+
+.pilot-run-log-body {
+  flex: 1;
+  min-height: 320px;
+  overflow-y: auto;
+  background: #16181d;
+  padding: 14px 18px;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11.5px;
+  line-height: 1.85;
+}
+
+.pilot-run-log-extras {
+  flex-shrink: 0;
+}
+
+.pilot-history-targets {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.pilot-history-target-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #3a3f46;
+}
+
 /* ---- Running status indicator ---- */
 .running-pulse {
   width: 8px;

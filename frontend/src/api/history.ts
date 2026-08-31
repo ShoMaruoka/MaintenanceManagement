@@ -1,5 +1,12 @@
 import { fetchJson } from './client'
-import type { DashboardStats, DeploySession, DeploySessionDetail } from '../types'
+import type {
+  DashboardStats,
+  DeploySession,
+  DeploySessionDetail,
+  PilotRunDetail,
+  PilotRunSummary,
+  PilotRunTarget,
+} from '../types'
 
 interface ApiDeploySession {
   sessionId: number
@@ -24,6 +31,37 @@ export async function getSession(sessionId: number): Promise<DeploySession> {
 
 export async function getDashboardStats(days: number = 30): Promise<DashboardStats> {
   return fetchJson<DashboardStats>(`/history/stats?days=${days}`)
+}
+
+interface ApiPilotRunTarget {
+  targetName: string
+  result: string
+  mode: string
+}
+
+interface ApiPilotRunSummary {
+  runId: string
+  dbName: string
+  executedBy: string
+  executedAt: string
+  stepLabel: string
+  result: string
+  summary: string
+}
+
+interface ApiPilotRunDetail extends ApiPilotRunSummary {
+  targets: ApiPilotRunTarget[]
+  logDetail?: string
+}
+
+export async function getPilotRuns(limit: number = 100): Promise<PilotRunSummary[]> {
+  const runs = await fetchJson<ApiPilotRunSummary[]>(`/history/pilot-runs?limit=${limit}`)
+  return runs.map(formatPilotRunSummary)
+}
+
+export async function getPilotRun(runId: string): Promise<PilotRunDetail> {
+  const run = await fetchJson<ApiPilotRunDetail>(`/history/pilot-runs/${encodeURIComponent(runId)}`)
+  return formatPilotRunDetail(run)
 }
 
 /** ISO 8601 (UTC) を「MM/DD HH:mm」（ローカル時刻）に整形する。 */
@@ -79,6 +117,32 @@ function buildModuleSummary(details: DeploySessionDetail[]): string {
       return ops.length > 0 ? `${type}×${total}（${ops.join('・')}）` : `${type}×${total}`
     })
     .join('・')
+}
+
+function formatPilotRunSummary(run: ApiPilotRunSummary): PilotRunSummary {
+  return {
+    runId: run.runId,
+    dbName: run.dbName as PilotRunSummary['dbName'],
+    executedBy: run.executedBy,
+    executedAt: formatExecutedAt(run.executedAt),
+    stepLabel: run.stepLabel,
+    result: run.result === 'failed' ? 'failed' : 'success',
+    summary: run.summary,
+  }
+}
+
+function formatPilotRunDetail(run: ApiPilotRunDetail): PilotRunDetail {
+  const targets: PilotRunTarget[] = (run.targets ?? []).map(t => ({
+    targetName: t.targetName,
+    result: t.result,
+    mode: t.mode,
+  }))
+  return {
+    ...formatPilotRunSummary(run),
+    targets,
+    logDetail: run.logDetail,
+    detailsFetched: true,
+  }
 }
 
 function formatSession(session: ApiDeploySession): DeploySession {

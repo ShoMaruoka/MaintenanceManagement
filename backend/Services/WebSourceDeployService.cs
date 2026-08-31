@@ -377,9 +377,13 @@ public class WebSourceDeployService
         && Directory.EnumerateFiles(dir, "*.sql", SearchOption.AllDirectories).Any();
 
     /// <summary>再帰で通常ファイルが1件以上あるか（空カテゴリフォルダのみは空扱い）。</summary>
-    internal static bool HasAnyFiles(string dir) =>
-        Directory.Exists(dir)
-        && Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Any();
+    internal static bool HasAnyFiles(string dir) => CountFiles(dir) > 0;
+
+    /// <summary>再帰で通常ファイル数を数える（ディレクトリ不存在は 0）。</summary>
+    internal static int CountFiles(string dir) =>
+        !Directory.Exists(dir)
+            ? 0
+            : Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories).Count();
 
 
     /// <summary>
@@ -609,8 +613,16 @@ public class WebSourceDeployService
             return (results, onlySqlResult);
         }
 
-        // Files の有無はターゲットループ外で1回判定し再利用する（F2）
-        var filesPathReady = Path.IsPathRooted(config.FilesPath) && HasAnyFiles(config.FilesPath);
+        // 画像情報準備カテゴリの有無はターゲットループ外で1回判定し再利用する。
+        var imagePrepareCategories = ImagePrepareService.AllowedCategories
+            .Select(category =>
+            {
+                var src = Path.Combine(config.FilesPath, category);
+                var fileCount = Path.IsPathRooted(src) ? CountFiles(src) : 0;
+                return (Category: category, Src: src, FileCount: fileCount);
+            })
+            .ToList();
+        var anyImagePrepareReady = imagePrepareCategories.Any(c => c.FileCount > 0);
 
         foreach (var target in config.PilotTargets)
         {
@@ -633,29 +645,48 @@ public class WebSourceDeployService
 
                 LogLine("OK", $"{target.Name}: robocopy コピー完了 (exit code {exitCode})");
 
-                // FilesPath（STG 適用後の静的ファイル。Images/news/pdf カテゴリを直下に持つ）を
-                // pilot 側 Web ソースルート直下へコピーする（Issue #35: FilesDeploy2PrdPath は使わない）。
-                // ファイル0件（またはパス未解決）はスキップして成功継続。
-                if (filesPathReady)
+                // 画像情報準備（Images / news / pdf）を DestWebSourcePath 同名フォルダへコピーする。
+                // FilesDeploy2PrdPath は使わない。空カテゴリはスキップ。
+                if (!anyImagePrepareReady)
                 {
-                    var filesExitCode = await RunRobocopyAsync(
-                        config.FilesPath,
-                        target.DestWebSourcePath,
-                        line => LogLine("DETAIL", line),
-                        ct);
-
-                    if (!IsRobocopySuccess(filesExitCode))
-                    {
-                        LogLine("ERROR", $"{target.Name}: Files コピーが robocopy エラー終了しました (exit code {filesExitCode})");
-                        results.Add(new WebSourceDeployTargetResult(target.Name, false, $"Files robocopy exit code {filesExitCode}"));
-                        break;
-                    }
-
-                    LogLine("OK", $"{target.Name}: Files コピー完了 (exit code {filesExitCode})");
+                    LogLine("INFO", $"{target.Name}: 画像情報準備の適用対象なし");
                 }
                 else
                 {
-                    LogLine("INFO", $"{target.Name}: Files コピーをスキップ（FilesPath にファイルなし）");
+                    var imagePrepareFailed = false;
+                    foreach (var category in imagePrepareCategories)
+                    {
+                        if (category.FileCount == 0)
+                        {
+                            LogLine("INFO", $"{target.Name}: 画像情報準備 {category.Category} をスキップ（ファイルなし）");
+                            continue;
+                        }
+
+                        var dest = Path.Combine(target.DestWebSourcePath, category.Category);
+                        LogLine("STEP",
+                            $"{target.Name}: 画像情報準備 Files: {category.Category} → {dest}");
+                        var filesExitCode = await RunRobocopyAsync(
+                            category.Src,
+                            dest,
+                            line => LogLine("DETAIL", line),
+                            ct);
+
+                        if (!IsRobocopySuccess(filesExitCode))
+                        {
+                            LogLine("ERROR",
+                                $"{target.Name}: 画像情報準備 {category.Category} のコピーが robocopy エラー終了しました (exit code {filesExitCode})");
+                            results.Add(new WebSourceDeployTargetResult(
+                                target.Name, false, $"画像情報準備 {category.Category} robocopy exit code {filesExitCode}"));
+                            imagePrepareFailed = true;
+                            break;
+                        }
+
+                        LogLine("OK",
+                            $"{target.Name}: 画像情報準備 {category.Category} コピー完了 (exit code {filesExitCode}, {category.FileCount} 件)");
+                    }
+
+                    if (imagePrepareFailed)
+                        break;
                 }
 
                 // 共通画像フォルダ → pilot の Images\products（Issue #27）。

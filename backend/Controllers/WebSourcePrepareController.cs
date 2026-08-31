@@ -96,7 +96,8 @@ public class WebSourcePrepareController : ControllerBase
         await Response.Body.FlushAsync(ct);
 
         var channel = Channel.CreateUnbounded<LogEntry>();
-        var writeTask = WriteStreamAsync(channel.Reader, ct);
+        var logLines = new StringBuilder();
+        var writeTask = WriteStreamAsync(channel.Reader, logLines, ct);
 
         try
         {
@@ -104,6 +105,7 @@ public class WebSourcePrepareController : ControllerBase
 
             channel.Writer.Complete();
             await writeTask;
+            var fullLog = logLines.ToString();
 
             foreach (var r in results)
             {
@@ -111,7 +113,7 @@ public class WebSourcePrepareController : ControllerBase
                     step, _dryRun, skipped: false, WebSourceLogRowKind.Web);
                 _db.InsertWebSourceDeployLog(
                     runId, config.Name, r.TargetName, mode, executedBy,
-                    r.Success ? "success" : "failed", r.ErrorMessage);
+                    r.Success ? "success" : "failed", fullLog);
             }
 
             if (sqlDeploy is not null)
@@ -120,7 +122,7 @@ public class WebSourcePrepareController : ControllerBase
                     step, _dryRun, sqlDeploy.Skipped, WebSourceLogRowKind.Sql);
                 _db.InsertWebSourceDeployLog(
                     runId, config.Name, "sql", mode, executedBy,
-                    sqlDeploy.Success ? "success" : "failed", sqlDeploy.ErrorMessage);
+                    sqlDeploy.Success ? "success" : "failed", fullLog);
             }
 
             // step=sql（Webソースコピーを行わない）の場合、results は常に空リストのため
@@ -145,14 +147,16 @@ public class WebSourcePrepareController : ControllerBase
             await writeTask;
             var mode = WebSourceDeployLogMode.ResolveLogMode(
                 step, _dryRun, skipped: false, WebSourceLogRowKind.Exception);
-            _db.InsertWebSourceDeployLog(runId, config.Name, "-", mode, executedBy, "failed", ex.Message);
+            _db.InsertWebSourceDeployLog(
+                runId, config.Name, "-", mode, executedBy, "failed", logLines.ToString());
         }
     }
 
-    private async Task WriteStreamAsync(ChannelReader<LogEntry> reader, CancellationToken ct)
+    private async Task WriteStreamAsync(ChannelReader<LogEntry> reader, StringBuilder logLines, CancellationToken ct)
     {
         await foreach (var entry in reader.ReadAllAsync(ct))
         {
+            PilotLogFormatter.Append(logLines, entry);
             var json = JsonSerializer.Serialize(entry, _camelCase);
             var data = $"data: {json}\n\n";
             await Response.Body.WriteAsync(Encoding.UTF8.GetBytes(data), ct);

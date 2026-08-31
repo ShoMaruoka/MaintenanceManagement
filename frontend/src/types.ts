@@ -87,6 +87,30 @@ export interface ProductionReadyLog {
   result: string
 }
 
+export interface PilotRunTarget {
+  targetName: string
+  result: string
+  mode: string
+}
+
+/** 実行履歴一覧の Pilot 適用（GET /api/history/pilot-runs）。logDetail は含まない。 */
+export interface PilotRunSummary {
+  runId: string
+  dbName: DbName
+  executedBy: string
+  executedAt: string
+  stepLabel: string
+  result: 'success' | 'failed'
+  summary: string
+}
+
+/** 実行履歴詳細の Pilot 適用（GET /api/history/pilot-runs/{runId}）。 */
+export interface PilotRunDetail extends PilotRunSummary {
+  targets: PilotRunTarget[]
+  logDetail?: string
+  detailsFetched?: boolean
+}
+
 /** Pilot 最終適用の要約（GET /api/history/stats）。 */
 export interface PilotDeploySummary {
   dbName: string
