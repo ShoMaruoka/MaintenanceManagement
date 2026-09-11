@@ -65,6 +65,27 @@ export async function getPilotRun(runId: string): Promise<PilotRunDetail> {
   return formatPilotRunDetail(run)
 }
 
+interface ApiProductionReadyLog {
+  logId: number
+  executedBy: string
+  executedAt: string
+  appliedFiles: number
+  heldFiles: number
+  manualFiles: number
+  result: string
+  logDetail?: string
+}
+
+export async function getPrepareLogs(limit: number = 100): Promise<ProductionReadyLog[]> {
+  const logs = await fetchJson<ApiProductionReadyLog[]>(`/history/prepare?limit=${limit}`)
+  return logs.map(formatPrepareLog)
+}
+
+export async function getPrepareLog(logId: number): Promise<ProductionReadyLog> {
+  const log = await fetchJson<ApiProductionReadyLog>(`/history/prepare/${logId}`)
+  return formatPrepareLogDetail(log)
+}
+
 /** 本番前準備の実行内容を「適用12 · 保留3 · 手動2」形式にまとめる。 */
 export function formatPrepareSummary(
   log: Pick<ProductionReadyLog, 'appliedFiles' | 'heldFiles' | 'manualFiles'>,
@@ -153,6 +174,26 @@ function formatPilotRunDetail(run: ApiPilotRunDetail): PilotRunDetail {
     targets,
     logDetail: run.logDetail,
     detailsFetched: true,
+  }
+}
+
+function formatPrepareLog(log: ApiProductionReadyLog): ProductionReadyLog {
+  return {
+    logId: log.logId,
+    executedBy: log.executedBy,
+    executedAt: formatExecutedAt(log.executedAt),
+    appliedFiles: log.appliedFiles,
+    heldFiles: log.heldFiles,
+    manualFiles: log.manualFiles,
+    result: log.result,
+  }
+}
+
+function formatPrepareLogDetail(log: ApiProductionReadyLog): ProductionReadyLog {
+  return {
+    ...formatPrepareLog(log),
+    logDetail: log.logDetail,
+    logDetailFetched: true,
   }
 }
 

@@ -77,6 +77,7 @@ export interface ProductionFile {
 
 export type MultiDbModules = { db: DbName; modules: SelectedModule[] }[]
 
+/** 実行履歴一覧の本番前準備（GET /api/history/prepare）。logDetail は含まない。 */
 export interface ProductionReadyLog {
   logId: number
   executedBy: string
@@ -85,6 +86,8 @@ export interface ProductionReadyLog {
   heldFiles: number
   manualFiles: number
   result: string
+  logDetail?: string
+  logDetailFetched?: boolean
 }
 
 export interface PilotRunTarget {

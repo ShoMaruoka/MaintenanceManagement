@@ -1,12 +1,27 @@
 import { useState, useEffect } from 'react'
 import StatusBadge from '../components/StatusBadge'
 import { SessionDetailTable } from '../components/SessionDetailTable'
-import { getSessions, getSession, getPilotRuns, getPilotRun } from '../api/history'
-import type { DeploySession, DbName, SessionStatus, PilotRunSummary, PilotRunDetail } from '../types'
+import {
+  formatPrepareSummary,
+  getPrepareLog,
+  getPrepareLogs,
+  getPilotRun,
+  getPilotRuns,
+  getSession,
+  getSessions,
+} from '../api/history'
+import type {
+  DbName,
+  DeploySession,
+  PilotRunDetail,
+  PilotRunSummary,
+  ProductionReadyLog,
+  SessionStatus,
+} from '../types'
 
 const DB_OPTIONS: (DbName | 'all')[] = ['all', 'kaios', 'gos', 'paf', 'duskin']
 const STATUS_OPTIONS: (SessionStatus | 'all')[] = ['all', 'success', 'failed', 'running']
-const KIND_OPTIONS = ['all', 'stg', 'pilot'] as const
+const KIND_OPTIONS = ['all', 'stg', 'pilot', 'prepare'] as const
 
 type KindFilter = (typeof KIND_OPTIONS)[number]
 
@@ -21,19 +36,30 @@ const KIND_LABELS: Record<KindFilter, string> = {
   all: 'すべて',
   stg: 'STG適用',
   pilot: 'Pilot適用',
+  prepare: '本番前準備',
 }
 
 type HistoryRow =
   | { kind: 'stg'; key: string; session: DeploySession }
   | { kind: 'pilot'; key: string; run: PilotRunSummary | PilotRunDetail }
+  | { kind: 'prepare'; key: string; log: ProductionReadyLog }
 
 function isPilotDetail(run: PilotRunSummary | PilotRunDetail): run is PilotRunDetail {
   return 'detailsFetched' in run && !!(run as PilotRunDetail).detailsFetched
 }
 
+function isPrepareDetail(log: ProductionReadyLog): boolean {
+  return 'logDetailFetched' in log && !!log.logDetailFetched
+}
+
+function prepareStatus(result: string): SessionStatus {
+  return result === 'failed' ? 'failed' : 'success'
+}
+
 export default function History() {
   const [sessions, setSessions] = useState<DeploySession[]>([])
   const [pilotRuns, setPilotRuns] = useState<(PilotRunSummary | PilotRunDetail)[]>([])
+  const [prepareLogs, setPrepareLogs] = useState<ProductionReadyLog[]>([])
   const [dbFilter, setDbFilter] = useState<DbName | 'all'>('all')
   const [statusFilter, setStatusFilter] = useState<SessionStatus | 'all'>('all')
   const [kindFilter, setKindFilter] = useState<KindFilter>('all')
@@ -46,12 +72,14 @@ export default function History() {
     const load = async () => {
       try {
         setLoading(true)
-        const [sessionData, pilotData] = await Promise.all([
+        const [sessionData, pilotData, prepareData] = await Promise.all([
           getSessions(100),
           getPilotRuns(100),
+          getPrepareLogs(100),
         ])
         setSessions(sessionData)
         setPilotRuns(pilotData)
+        setPrepareLogs(prepareData)
       } catch (err) {
         setError((err as Error).message)
       } finally {
@@ -73,9 +101,22 @@ export default function History() {
       key: `pilot-${run.runId}`,
       run,
     })),
+    ...prepareLogs.map(log => ({
+      kind: 'prepare' as const,
+      key: `prepare-${log.logId}`,
+      log,
+    })),
   ].sort((a, b) => {
-    const atA = a.kind === 'stg' ? a.session.executedAt : a.run.executedAt
-    const atB = b.kind === 'stg' ? b.session.executedAt : b.run.executedAt
+    const atA = a.kind === 'stg'
+      ? a.session.executedAt
+      : a.kind === 'pilot'
+        ? a.run.executedAt
+        : a.log.executedAt
+    const atB = b.kind === 'stg'
+      ? b.session.executedAt
+      : b.kind === 'pilot'
+        ? b.run.executedAt
+        : b.log.executedAt
     const cmp = atB.localeCompare(atA)
     return cmp !== 0 ? cmp : b.key.localeCompare(a.key)
   })
@@ -110,6 +151,32 @@ export default function History() {
     }
   }
 
+  const handleExpandPrepare = async (logId: number, key: string) => {
+    if (expandedKey === key) {
+      setExpandedKey(null)
+      setExpandError('')
+      return
+    }
+
+    const existing = prepareLogs.find(l => l.logId === logId)
+    if (existing && isPrepareDetail(existing)) {
+      setExpandError('')
+      setExpandedKey(key)
+      return
+    }
+
+    try {
+      const detail = await getPrepareLog(logId)
+      setPrepareLogs(prev => prev.map(l => l.logId === logId ? detail : l))
+      setExpandError('')
+      setExpandedKey(key)
+    } catch (err) {
+      console.error('Failed to load prepare log details:', err)
+      setExpandError('本番前準備詳細の取得に失敗しました')
+      setExpandedKey(key)
+    }
+  }
+
   const handleExpandPilot = async (runId: string, key: string) => {
     if (expandedKey === key) {
       setExpandedKey(null)
@@ -138,6 +205,11 @@ export default function History() {
 
   const filtered = rows.filter(row => {
     if (kindFilter !== 'all' && row.kind !== kindFilter) return false
+    if (row.kind === 'prepare') {
+      if (statusFilter === 'running') return false
+      if (statusFilter !== 'all' && row.log.result !== statusFilter) return false
+      return true
+    }
     if (row.kind === 'stg') {
       if (dbFilter !== 'all' && row.session.dbName !== dbFilter) return false
       if (statusFilter !== 'all' && row.session.status !== statusFilter) return false
@@ -209,25 +281,39 @@ export default function History() {
           <div className="empty-state">該当する履歴がありません</div>
         )}
 
-        {!loading && !error && filtered.map(row => (
-          row.kind === 'stg' ? (
-            <StgHistoryRow
+        {!loading && !error && filtered.map(row => {
+          if (row.kind === 'stg') {
+            return (
+              <StgHistoryRow
+                key={row.key}
+                session={row.session}
+                expanded={expandedKey === row.key}
+                expandError={expandedKey === row.key ? expandError : ''}
+                onToggle={() => void handleExpandStg(row.session.sessionId, row.key)}
+              />
+            )
+          }
+          if (row.kind === 'pilot') {
+            return (
+              <PilotHistoryRow
+                key={row.key}
+                run={row.run}
+                expanded={expandedKey === row.key}
+                expandError={expandedKey === row.key ? expandError : ''}
+                onToggle={() => void handleExpandPilot(row.run.runId, row.key)}
+              />
+            )
+          }
+          return (
+            <PrepareHistoryRow
               key={row.key}
-              session={row.session}
+              log={row.log}
               expanded={expandedKey === row.key}
               expandError={expandedKey === row.key ? expandError : ''}
-              onToggle={() => void handleExpandStg(row.session.sessionId, row.key)}
-            />
-          ) : (
-            <PilotHistoryRow
-              key={row.key}
-              run={row.run}
-              expanded={expandedKey === row.key}
-              expandError={expandedKey === row.key ? expandError : ''}
-              onToggle={() => void handleExpandPilot(row.run.runId, row.key)}
+              onToggle={() => void handleExpandPrepare(row.log.logId, row.key)}
             />
           )
-        ))}
+        })}
       </div>
     </div>
   )
@@ -282,6 +368,63 @@ function StgHistoryRow({
           {!expandError && (
             session.logDetail ? (
               <pre className="log-detail-full-log">{session.logDetail}</pre>
+            ) : (
+              <div style={{ fontSize: 11, color: '#9aa0a8', marginTop: 8 }}>ログがありません</div>
+            )
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PrepareHistoryRow({
+  log,
+  expanded,
+  expandError,
+  onToggle,
+}: {
+  log: ProductionReadyLog
+  expanded: boolean
+  expandError: string
+  onToggle: () => void
+}) {
+  const detail = isPrepareDetail(log) ? log : null
+  const summary = formatPrepareSummary(log)
+
+  return (
+    <div>
+      <div
+        className="table-row"
+        style={{ gridTemplateColumns: '140px 90px 1fr 100px 90px', cursor: 'pointer' }}
+        onClick={onToggle}
+      >
+        <div className="table-cell-mono">{log.executedAt}</div>
+        <div className="table-cell-db" style={{ color: '#9aa0a8' }}>—</div>
+        <div className="table-cell-module">本番前準備（{summary}）</div>
+        <div className="table-cell-user">{log.executedBy}</div>
+        <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 6 }}>
+          <StatusBadge status={prepareStatus(log.result)} />
+          <ExpandChevron expanded={expanded} />
+        </div>
+      </div>
+      {expanded && (
+        <div className="log-session-detail">
+          <div className="log-detail-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            本番前準備詳細
+            <span style={{ fontWeight: 400, color: '#9aa0a8' }}>{summary}</span>
+          </div>
+          {expandError && (
+            <div style={{ fontSize: 11, color: '#c5283d', marginTop: 6 }}>{expandError}</div>
+          )}
+          {log.result === 'failed' && (
+            <div style={{ marginTop: 8, padding: '8px 10px', background: '#fcebed', border: '1px solid #f3c0c5', borderRadius: 6, fontSize: 11, color: '#c5283d' }}>
+              エラーが発生しました。実行ログを確認してください。
+            </div>
+          )}
+          {!expandError && (
+            detail?.logDetail ? (
+              <pre className="log-detail-full-log">{detail.logDetail}</pre>
             ) : (
               <div style={{ fontSize: 11, color: '#9aa0a8', marginTop: 8 }}>ログがありません</div>
             )

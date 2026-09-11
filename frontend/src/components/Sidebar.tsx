@@ -41,16 +41,6 @@ const NAV_ITEMS = [
     ),
   },
   {
-    to: '/prepare',
-    label: '本番前準備',
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-        <rect x="2" y="4.5" width="8" height="9" rx="1.3" stroke="currentColor" strokeWidth="1.4"/>
-        <path d="M6 4.5v-2a1 1 0 011-1h6a1 1 0 011 1v8a1 1 0 01-1 1h-2" stroke="currentColor" strokeWidth="1.4"/>
-      </svg>
-    ),
-  },
-  {
     to: '/web-source',
     label: 'Pilot環境適用',
     icon: (
@@ -58,6 +48,16 @@ const NAV_ITEMS = [
         <rect x="1.5" y="3" width="5.5" height="10" rx="1.2" stroke="currentColor" strokeWidth="1.4"/>
         <rect x="9" y="3" width="5.5" height="10" rx="1.2" stroke="currentColor" strokeWidth="1.4"/>
         <path d="M6.7 8h2.6M7.8 6.9L9 8l-1.2 1.1" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+    ),
+  },
+  {
+    to: '/prepare',
+    label: '本番前準備',
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+        <rect x="2" y="4.5" width="8" height="9" rx="1.3" stroke="currentColor" strokeWidth="1.4"/>
+        <path d="M6 4.5v-2a1 1 0 011-1h6a1 1 0 011 1v8a1 1 0 01-1 1h-2" stroke="currentColor" strokeWidth="1.4"/>
       </svg>
     ),
   },

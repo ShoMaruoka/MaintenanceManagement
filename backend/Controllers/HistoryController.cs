@@ -43,8 +43,17 @@ public class HistoryController : ControllerBase
     [HttpGet("prepare")]
     public IActionResult GetPrepareLogs([FromQuery] int limit = 20)
     {
+        limit = Math.Clamp(limit, 1, 500);
         var logs = _db.GetRecentPrepLogs(limit);
         return Ok(logs);
+    }
+
+    [HttpGet("prepare/{logId:long}")]
+    public IActionResult GetPrepareLog(long logId)
+    {
+        var log = _db.GetPrepLogById(logId);
+        if (log is null) return NotFound();
+        return Ok(log);
     }
 
     [HttpGet("pilot-runs")]

@@ -377,7 +377,7 @@ public class DatabaseService
         using var conn = OpenConnection();
         using var cmd = conn.CreateCommand();
         cmd.CommandText = """
-            SELECT LogId, ExecutedBy, ExecutedAt, AppliedFiles, HeldFiles, Result, LogDetail, ManualFiles
+            SELECT LogId, ExecutedBy, ExecutedAt, AppliedFiles, HeldFiles, Result, ManualFiles
             FROM ProductionReadyLog ORDER BY LogId DESC LIMIT $limit;
             """;
         cmd.Parameters.AddWithValue("$limit", limit);
@@ -394,11 +394,35 @@ public class DatabaseService
                 AppliedFiles = reader.GetInt32(3),
                 HeldFiles    = reader.GetInt32(4),
                 Result       = reader.GetString(5),
-                LogDetail    = reader.IsDBNull(6) ? null : reader.GetString(6),
-                ManualFiles  = reader.IsDBNull(7) ? 0 : reader.GetInt32(7),
+                ManualFiles  = reader.IsDBNull(6) ? 0 : reader.GetInt32(6),
             });
         }
         return logs;
+    }
+
+    public ProductionReadyLog? GetPrepLogById(long logId)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT LogId, ExecutedBy, ExecutedAt, AppliedFiles, HeldFiles, Result, LogDetail, ManualFiles
+            FROM ProductionReadyLog WHERE LogId = $logId;
+            """;
+        cmd.Parameters.AddWithValue("$logId", logId);
+
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read()) return null;
+        return new ProductionReadyLog
+        {
+            LogId        = reader.GetInt64(0),
+            ExecutedBy   = reader.GetString(1),
+            ExecutedAt   = reader.GetString(2),
+            AppliedFiles = reader.GetInt32(3),
+            HeldFiles    = reader.GetInt32(4),
+            Result       = reader.GetString(5),
+            LogDetail    = reader.IsDBNull(6) ? null : reader.GetString(6),
+            ManualFiles  = reader.IsDBNull(7) ? 0 : reader.GetInt32(7),
+        };
     }
 
     /// <summary>
