@@ -159,9 +159,21 @@ public class DeployService
         if (!_dryRun)
         {
             Directory.CreateDirectory(mergePath);
-            await File.WriteAllTextAsync(updatePath, string.Join("\r\n", updateModules.Select(m => $"{m.Type},{m.Name}")), sjis);
-            await File.WriteAllTextAsync(deletePath, string.Join("\r\n", deleteModules.Select(m => $"{m.Type},{m.Name}")), sjis);
+            await File.WriteAllTextAsync(updatePath, string.Join("\r\n", updateModules.Select(ModuleListLine)), sjis);
+            await File.WriteAllTextAsync(deletePath, string.Join("\r\n", deleteModules.Select(ModuleListLine)), sjis);
         }
+    }
+
+    /// <summary>
+    /// git_merge.bat は Type 列を Git フォルダ名として使う。
+    /// MariaDB の FUNCTION は画面上 MariaDbFunction だが、Git 上は PROCEDURE と同じ Stored フォルダ。
+    /// </summary>
+    private static string ModuleListLine(DeployModule m)
+    {
+        var folder = string.Equals(m.Type, "MariaDbFunction", StringComparison.OrdinalIgnoreCase)
+            ? "Stored"
+            : m.Type;
+        return $"{folder},{m.Name}";
     }
 
     private async Task Step2_GitLiveUpdates(ChannelWriter<LogEntry> w, DbConfig config, string tag, CancellationToken ct)

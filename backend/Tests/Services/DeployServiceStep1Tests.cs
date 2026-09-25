@@ -106,4 +106,58 @@ public class DeployServiceStep1Tests
             Directory.Delete(tempRoot, recursive: true);
         }
     }
+
+    [Fact]
+    public async Task ExecuteAsync_WritesMariaDbFunction_AsStoredFolder_InModuleLists()
+    {
+        var tempRoot = Directory.CreateTempSubdirectory("deploy-step1-function").FullName;
+        try
+        {
+            var config = new DbConfig
+            {
+                Name = "step1-function-" + Guid.NewGuid(),
+                SourceControlPath = tempRoot,
+                GitRepoPath = Path.Combine(tempRoot, "GitRepo"),
+                MariaDbGitRepoPath = Path.Combine(tempRoot, "MariaDbGitRepo"),
+                DeployDev2StgPath = Path.Combine(tempRoot, "Deploy_DEV2STG"),
+            };
+
+            var configuration = DryRunFalseConfig();
+            var manualApply = new ManualApplyService(configuration, NullLogger<ManualApplyService>.Instance);
+            var deployService = new DeployService(configuration, manualApply, NullLogger<DeployService>.Instance);
+
+            var request = new DeployRequest
+            {
+                DbName = config.Name,
+                ExecutedBy = "tester",
+                Modules =
+                [
+                    new DeployModule { Type = "MariaDbFunction", Name = "getTodayStr", OpType = "更新" },
+                    new DeployModule { Type = "MariaDbFunction", Name = "oldFunc", OpType = "削除" },
+                    new DeployModule { Type = "Stored", Name = "usp_Goods", OpType = "更新" },
+                    new DeployModule { Type = "Function", Name = "fn_SqlServer", OpType = "更新" },
+                ],
+            };
+
+            var reader = deployService.ExecuteAsync(config, request, "tester", CancellationToken.None);
+            await foreach (var _ in reader.ReadAllAsync()) { }
+
+            var sjis = Encoding.GetEncoding("shift_jis");
+            var mariaUpdate = await File.ReadAllTextAsync(Path.Combine(config.MariaDbMergePath, "UpdateModule.txt"), sjis);
+            var mariaDelete = await File.ReadAllTextAsync(Path.Combine(config.MariaDbMergePath, "DeleteModule.txt"), sjis);
+            var sqlUpdate = await File.ReadAllTextAsync(Path.Combine(config.MergePath, "UpdateModule.txt"), sjis);
+
+            Assert.Contains("Stored,getTodayStr", mariaUpdate);
+            Assert.Contains("Stored,usp_Goods", mariaUpdate);
+            Assert.DoesNotContain("MariaDbFunction", mariaUpdate);
+            Assert.Contains("Stored,oldFunc", mariaDelete);
+            Assert.DoesNotContain("MariaDbFunction", mariaDelete);
+            Assert.Contains("Function,fn_SqlServer", sqlUpdate);
+            Assert.DoesNotContain("getTodayStr", sqlUpdate);
+        }
+        finally
+        {
+            Directory.Delete(tempRoot, recursive: true);
+        }
+    }
 }
