@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using Microsoft.Extensions.Configuration;
@@ -36,6 +37,12 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
     {
         public List<(string FileName, string Arguments, string? WorkingDirectory)> Calls { get; } = [];
 
+        /// <summary>cmd.exe の終了コード。既定 0。</summary>
+        public int CmdExitCode { get; set; }
+
+        /// <summary>cmd.exe 起動時、終了コードを返す直前に呼ぶ。既定は何もしない。</summary>
+        public Action<string?>? OnCmd { get; set; }
+
         public Task<int> RunAsync(
             string fileName,
             string arguments,
@@ -44,7 +51,13 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
             CancellationToken ct)
         {
             Calls.Add((fileName, arguments, workingDirectory));
-            // robocopy 成功範囲の代表値 1、bat/cmd は 0
+            if (string.Equals(fileName, "cmd.exe", StringComparison.OrdinalIgnoreCase))
+            {
+                OnCmd?.Invoke(workingDirectory);
+                return Task.FromResult(CmdExitCode);
+            }
+
+            // robocopy 成功範囲の代表値 1
             return Task.FromResult(
                 string.Equals(fileName, "robocopy.exe", StringComparison.OrdinalIgnoreCase) ? 1 : 0);
         }
@@ -429,6 +442,74 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
 
         Assert.True(sql!.Skipped);
         Assert.Contains(messages, m => m.Contains("SQL適用: スキップ（適用対象 SQL なし）", StringComparison.Ordinal));
+        Assert.Equal("✅ Pilot環境適用が完了しました", messages[^1]);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_Both_SqlErrorLog_FinalLineIsInterrupted()
+    {
+        var webSrc = Path.Combine(_root, "WebSrc");
+        var pilot1 = Path.Combine(_root, "pilot1");
+        Directory.CreateDirectory(webSrc);
+        Directory.CreateDirectory(pilot1);
+        // Fake はファイルを運ばない。非 DryRun の web.config 適用はコピー先を見る。
+        File.WriteAllText(Path.Combine(pilot1, "Web.config.DC.kaios.pilot"), "<configuration />");
+
+        var config = CreateConfig();
+        config.WebSourcePath = webSrc;
+        config.PilotTargets =
+        [
+            new PilotTarget { Name = "pilot1", DestWebSourcePath = pilot1, DestImagePath = "" },
+        ];
+        WriteSql(config.DeployedPath, "a.sql");
+        Directory.CreateDirectory(config.MariaDbDeployedPath);
+
+        var now = new DateTime(2026, 10, 1, 15, 0, 0, DateTimeKind.Local);
+        var logPath = SqlDeployErrorLog.PathFor(config.PilotSqlDeployPath, now);
+        var (svc, runner) = CreateService();
+        PinClock(svc, now);
+        runner.OnCmd = _ => WriteErrorLog(logPath, "列名が無効です");
+
+        var channel = Channel.CreateUnbounded<LogEntry>();
+        var (targets, sql) = await svc.ExecuteAsync(config, channel.Writer, CancellationToken.None, WebSourceDeployStep.Both);
+        channel.Writer.Complete();
+
+        var messages = new List<string>();
+        await foreach (var e in channel.Reader.ReadAllAsync())
+            messages.Add(e.Message);
+
+        Assert.True(targets.Single().Success);
+        Assert.False(sql!.Success);
+        var failIndex = messages.FindIndex(m => m.Contains("SQL適用: 失敗しました", StringComparison.Ordinal));
+        Assert.True(failIndex >= 0);
+        Assert.Equal("❌ Pilot環境適用が中断されました", messages[^1]);
+        Assert.True(failIndex < messages.Count - 1);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_SqlOnly_ErrorLog_FinalLineIsInterrupted()
+    {
+        var config = CreateConfig();
+        WriteSql(config.DeployedPath, "a.sql");
+        Directory.CreateDirectory(config.MariaDbDeployedPath);
+
+        var now = new DateTime(2026, 10, 1, 15, 0, 0, DateTimeKind.Local);
+        var logPath = SqlDeployErrorLog.PathFor(config.PilotSqlDeployPath, now);
+        var (svc, runner) = CreateService();
+        PinClock(svc, now);
+        runner.OnCmd = _ => WriteErrorLog(logPath, "列名が無効です");
+
+        var channel = Channel.CreateUnbounded<LogEntry>();
+        var (_, sql) = await svc.ExecuteAsync(config, channel.Writer, CancellationToken.None, WebSourceDeployStep.SqlOnly);
+        channel.Writer.Complete();
+
+        var messages = new List<string>();
+        await foreach (var e in channel.Reader.ReadAllAsync())
+            messages.Add(e.Message);
+
+        Assert.False(sql!.Success);
+        Assert.Contains(messages, m => m.Contains("SQL適用: 失敗しました", StringComparison.Ordinal));
+        Assert.Equal("❌ Pilot環境適用が中断されました", messages[^1]);
     }
 
     private static List<(string Src, string Dest)> ParseDryRunCopies(IEnumerable<string> messages)
@@ -590,5 +671,362 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
         Assert.Equal(
             "✅ Pilot環境適用が完了しました",
             WebSourceDeployService.FormatOverallCompletionMessage(failed: false, skippedOnly: false));
+    }
+
+    private static readonly Encoding Sjis = Encoding.GetEncoding("shift_jis");
+
+    private string ErrorLogPath() => Path.Combine(_root, $"deployerror-{Guid.NewGuid():N}.log");
+
+    private static SqlDeployErrorLogReadResult ReadErrorLog(
+        string path, SqlDeployErrorLogSnapshot before, DateTime startedAtUtc) =>
+        SqlDeployErrorLog.ReadNewContent(path, before, startedAtUtc, Sjis);
+
+    [Fact]
+    public void ReadNewContent_NewFileWithText_IsErrorWithWholeFile()
+    {
+        var path = ErrorLogPath();
+        File.WriteAllText(path, "Msg 207 列名が無効です", Sjis);
+        var startedAt = new DateTime(2026, 10, 1, 6, 0, 0, DateTimeKind.Utc);
+
+        var result = ReadErrorLog(path, SqlDeployErrorLogSnapshot.Absent, startedAt);
+
+        Assert.True(result.HasNewError);
+        Assert.False(result.Unreadable);
+        Assert.Equal("Msg 207 列名が無効です", result.Content);
+    }
+
+    [Fact]
+    public void ReadNewContent_AppendedBytes_ReturnsOnlyTheNewRange()
+    {
+        var path = ErrorLogPath();
+        var prefix = Sjis.GetBytes("previous\r\n");
+        var added = Sjis.GetBytes("列名 'Unknown' が無効です");
+        File.WriteAllBytes(path, prefix.Concat(added).ToArray());
+        var startedAt = new DateTime(2026, 10, 1, 6, 0, 0, DateTimeKind.Utc);
+        var before = new SqlDeployErrorLogSnapshot(true, prefix.Length, startedAt.AddHours(-1));
+
+        var result = ReadErrorLog(path, before, startedAt);
+
+        Assert.True(result.HasNewError);
+        Assert.Equal("列名 'Unknown' が無効です", result.Content);
+    }
+
+    [Fact]
+    public void ReadNewContent_UnchangedFile_IsNotError()
+    {
+        var path = ErrorLogPath();
+        File.WriteAllText(path, "yesterday's error", Sjis);
+        var startedAt = new DateTime(2026, 10, 1, 6, 0, 0, DateTimeKind.Utc);
+        var writtenAt = startedAt.AddHours(-5);
+        File.SetLastWriteTimeUtc(path, writtenAt);
+        var before = SqlDeployErrorLog.Capture(path);
+
+        var result = ReadErrorLog(path, before, startedAt);
+
+        Assert.False(result.HasNewError);
+        Assert.Null(result.Content);
+    }
+
+    [Fact]
+    public void ReadNewContent_EmptyFile_IsNotError()
+    {
+        var path = ErrorLogPath();
+        File.WriteAllBytes(path, []);
+        var startedAt = new DateTime(2026, 10, 1, 6, 0, 0, DateTimeKind.Utc);
+
+        var result = ReadErrorLog(path, SqlDeployErrorLogSnapshot.Absent, startedAt);
+
+        Assert.False(result.HasNewError);
+    }
+
+    [Fact]
+    public void ReadNewContent_WhitespaceOnlyAppend_IsNotError()
+    {
+        var path = ErrorLogPath();
+        File.WriteAllText(path, "ABC   \r\n", Sjis);
+        var startedAt = new DateTime(2026, 10, 1, 6, 0, 0, DateTimeKind.Utc);
+        var before = new SqlDeployErrorLogSnapshot(true, 3, startedAt.AddHours(-1));
+
+        var result = ReadErrorLog(path, before, startedAt);
+
+        Assert.False(result.HasNewError);
+        Assert.Null(result.Content);
+    }
+
+    [Fact]
+    public void ReadNewContent_SameSizeTouchedWithinSkew_ReturnsWholeFile()
+    {
+        var path = ErrorLogPath();
+        File.WriteAllText(path, "NEW!", Sjis);
+        var startedAt = new DateTime(2026, 10, 1, 6, 0, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(path, startedAt.AddSeconds(-1));
+        var before = new SqlDeployErrorLogSnapshot(true, 4, startedAt.AddHours(-1));
+
+        var result = ReadErrorLog(path, before, startedAt);
+
+        Assert.True(result.HasNewError);
+        Assert.Equal("NEW!", result.Content);
+    }
+
+    [Fact]
+    public void ReadNewContent_ShrunkAndTouched_ReturnsWholeFile()
+    {
+        var path = ErrorLogPath();
+        File.WriteAllText(path, "ERR", Sjis);
+        var startedAt = new DateTime(2026, 10, 1, 6, 0, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(path, startedAt);
+        var before = new SqlDeployErrorLogSnapshot(true, 10, startedAt.AddHours(-1));
+
+        var result = ReadErrorLog(path, before, startedAt);
+
+        Assert.True(result.HasNewError);
+        Assert.Equal("ERR", result.Content);
+    }
+
+    [Fact]
+    public void ReadNewContent_OldTimestampWithoutGrowth_IsNotError()
+    {
+        var path = ErrorLogPath();
+        File.WriteAllText(path, "OLD!", Sjis);
+        var startedAt = new DateTime(2026, 10, 1, 6, 0, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(path, startedAt.AddSeconds(-3));
+        var before = new SqlDeployErrorLogSnapshot(true, 4, startedAt.AddHours(-1));
+
+        var result = ReadErrorLog(path, before, startedAt);
+
+        Assert.False(result.HasNewError);
+    }
+
+    [Fact]
+    public void ReadNewContent_InvalidShiftJisAppend_IsUnreadableError()
+    {
+        var path = ErrorLogPath();
+        var prefix = Sjis.GetBytes("OK\r\n");
+        // 0x81 は Shift-JIS の先行バイト。単体では文字にならず復号できない。
+        File.WriteAllBytes(path, prefix.Concat(new byte[] { 0x81 }).ToArray());
+        var startedAt = new DateTime(2026, 10, 1, 6, 0, 0, DateTimeKind.Utc);
+        var before = new SqlDeployErrorLogSnapshot(true, prefix.Length, startedAt.AddHours(-1));
+
+        var result = ReadErrorLog(path, before, startedAt);
+
+        Assert.True(result.HasNewError);
+        Assert.True(result.Unreadable);
+        Assert.Null(result.Content);
+    }
+
+    private static void PinClock(WebSourceDeployService svc, DateTime local) =>
+        svc.LocalNow = () => local;
+
+    private static void WriteErrorLog(string path, string text)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, text, Sjis);
+    }
+
+    [Fact]
+    public async Task RunSqlDeploy_ErrorLogCreatedDuringBat_FailsAndOmitsBodyFromMessage()
+    {
+        var config = CreateConfig();
+        WriteSql(config.DeployedPath, "a.sql");
+        var now = new DateTime(2026, 10, 1, 15, 0, 0, DateTimeKind.Local);
+        var logPath = SqlDeployErrorLog.PathFor(config.PilotSqlDeployPath, now);
+        var (svc, runner) = CreateService();
+        PinClock(svc, now);
+        runner.OnCmd = _ => WriteErrorLog(logPath, "列名が無効です");
+        var logs = new List<string>();
+
+        var result = await svc.RunSqlDeployAsync(config, logs.Add, CancellationToken.None);
+
+        Assert.False(result!.Success);
+        Assert.Contains("終了コード 0", result.ErrorMessage, StringComparison.Ordinal);
+        Assert.Contains(logPath, result.ErrorMessage, StringComparison.Ordinal);
+        Assert.DoesNotContain("列名が無効です", result.ErrorMessage, StringComparison.Ordinal);
+        Assert.Contains(logs, l => l.Contains("列名が無効です", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RunSqlDeploy_ErrorLogOverLineLimit_TruncatesAndNotesPath()
+    {
+        var config = CreateConfig();
+        WriteSql(config.DeployedPath, "a.sql");
+        var now = new DateTime(2026, 10, 1, 15, 0, 0, DateTimeKind.Local);
+        var logPath = SqlDeployErrorLog.PathFor(config.PilotSqlDeployPath, now);
+        var body = string.Join("\r\n", Enumerable.Range(0, 60).Select(i => $"err-line-{i:00}"));
+        var (svc, runner) = CreateService();
+        PinClock(svc, now);
+        runner.OnCmd = _ => WriteErrorLog(logPath, body);
+        var logs = new List<string>();
+
+        var result = await svc.RunSqlDeployAsync(config, logs.Add, CancellationToken.None);
+
+        Assert.False(result!.Success);
+        Assert.Contains(logs, l => l == "err-line-00");
+        Assert.Contains(logs, l => l == "err-line-49");
+        Assert.DoesNotContain(logs, l => l == "err-line-50");
+        Assert.Contains(logs, l => l.Contains("以降省略", StringComparison.Ordinal) && l.Contains(logPath, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task RunSqlDeploy_ErrorLogOverCharLimit_TruncatesAndNotesPath()
+    {
+        var config = CreateConfig();
+        WriteSql(config.DeployedPath, "a.sql");
+        var now = new DateTime(2026, 10, 1, 15, 0, 0, DateTimeKind.Local);
+        var logPath = SqlDeployErrorLog.PathFor(config.PilotSqlDeployPath, now);
+        var body = new string('A', 9000);
+        var (svc, runner) = CreateService();
+        PinClock(svc, now);
+        runner.OnCmd = _ => WriteErrorLog(logPath, body);
+        var logs = new List<string>();
+
+        var result = await svc.RunSqlDeployAsync(config, logs.Add, CancellationToken.None);
+
+        Assert.False(result!.Success);
+        Assert.DoesNotContain(logs, l => l.Length == 9000);
+        Assert.Contains(logs, l => l.Length == 8000 && l.All(c => c == 'A'));
+        Assert.Contains(logs, l => l.Contains("以降省略", StringComparison.Ordinal) && l.Contains(logPath, StringComparison.Ordinal));
+        Assert.DoesNotContain("AAAA", result.ErrorMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RunSqlDeploy_UnchangedErrorLog_Succeeds()
+    {
+        var config = CreateConfig();
+        WriteSql(config.DeployedPath, "a.sql");
+        var now = new DateTime(2026, 10, 1, 15, 0, 0, DateTimeKind.Local);
+        var logPath = SqlDeployErrorLog.PathFor(config.PilotSqlDeployPath, now);
+        WriteErrorLog(logPath, "yesterday error");
+        File.SetLastWriteTimeUtc(logPath, now.ToUniversalTime().AddHours(-5));
+        var (svc, _) = CreateService();
+        PinClock(svc, now);
+
+        var result = await svc.RunSqlDeployAsync(config, _ => { }, CancellationToken.None);
+
+        Assert.True(result!.Success);
+    }
+
+    [Fact]
+    public async Task RunSqlDeploy_EmptyErrorLog_Succeeds()
+    {
+        var config = CreateConfig();
+        WriteSql(config.DeployedPath, "a.sql");
+        var now = new DateTime(2026, 10, 1, 15, 0, 0, DateTimeKind.Local);
+        var logPath = SqlDeployErrorLog.PathFor(config.PilotSqlDeployPath, now);
+        var (svc, runner) = CreateService();
+        PinClock(svc, now);
+        runner.OnCmd = _ => WriteErrorLog(logPath, "");
+
+        var result = await svc.RunSqlDeployAsync(config, _ => { }, CancellationToken.None);
+
+        Assert.True(result!.Success);
+    }
+
+    [Fact]
+    public async Task RunSqlDeploy_WhitespaceErrorLogAppend_Succeeds()
+    {
+        var config = CreateConfig();
+        WriteSql(config.DeployedPath, "a.sql");
+        var now = new DateTime(2026, 10, 1, 15, 0, 0, DateTimeKind.Local);
+        var logPath = SqlDeployErrorLog.PathFor(config.PilotSqlDeployPath, now);
+        WriteErrorLog(logPath, "ABC");
+        File.SetLastWriteTimeUtc(logPath, now.ToUniversalTime().AddHours(-5));
+        var (svc, runner) = CreateService();
+        PinClock(svc, now);
+        runner.OnCmd = _ => File.AppendAllText(logPath, "   \r\n", Sjis);
+
+        var result = await svc.RunSqlDeployAsync(config, _ => { }, CancellationToken.None);
+
+        Assert.True(result!.Success);
+    }
+
+    [Fact]
+    public async Task RunSqlDeploy_BatExitCodeNonZero_WithoutNewErrorLog_KeepsExitMessage()
+    {
+        var config = CreateConfig();
+        WriteSql(config.DeployedPath, "a.sql");
+        var (svc, runner) = CreateService();
+        runner.CmdExitCode = 1;
+
+        var result = await svc.RunSqlDeployAsync(config, _ => { }, CancellationToken.None);
+
+        Assert.False(result!.Success);
+        Assert.Equal("SQL Server deploy.bat がエラー終了しました (exit code 1)", result.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task RunSqlDeploy_BatExitCodeNonZero_WithErrorLog_AppendsPath()
+    {
+        var config = CreateConfig();
+        WriteSql(config.DeployedPath, "a.sql");
+        var now = new DateTime(2026, 10, 1, 15, 0, 0, DateTimeKind.Local);
+        var logPath = SqlDeployErrorLog.PathFor(config.PilotSqlDeployPath, now);
+        var (svc, runner) = CreateService();
+        PinClock(svc, now);
+        runner.CmdExitCode = 1;
+        runner.OnCmd = _ => WriteErrorLog(logPath, "syntax error");
+
+        var result = await svc.RunSqlDeployAsync(config, _ => { }, CancellationToken.None);
+
+        Assert.False(result!.Success);
+        Assert.Equal(
+            $"SQL Server deploy.bat がエラー終了しました (exit code 1)。エラーログ: {logPath}",
+            result.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task RunSqlDeploy_SqlServerErrorLog_DoesNotRunMariaDbBat()
+    {
+        var config = CreateConfig();
+        WriteSql(config.DeployedPath, "a.sql");
+        WriteSql(config.MariaDbDeployedPath, "b.sql");
+        var now = new DateTime(2026, 10, 1, 15, 0, 0, DateTimeKind.Local);
+        var logPath = SqlDeployErrorLog.PathFor(config.PilotSqlDeployPath, now);
+        var (svc, runner) = CreateService();
+        PinClock(svc, now);
+        runner.OnCmd = _ => WriteErrorLog(logPath, "sql server failed");
+
+        var result = await svc.RunSqlDeployAsync(config, _ => { }, CancellationToken.None);
+
+        Assert.False(result!.Success);
+        Assert.Equal(1, runner.BatCallCount);
+        Assert.True(runner.RanBat(config.PilotSqlDeployBatPath, config.PilotSqlDeployPath));
+        Assert.False(runner.RanBat(config.PilotMariaDbSqlDeployBatPath, config.PilotMariaDbSqlDeployPath));
+    }
+
+    [Fact]
+    public async Task RunSqlDeploy_DryRun_IgnoresExistingErrorLog()
+    {
+        var config = CreateConfig();
+        WriteSql(config.DeployedPath, "a.sql");
+        var now = new DateTime(2026, 10, 1, 15, 0, 0, DateTimeKind.Local);
+        var logPath = SqlDeployErrorLog.PathFor(config.PilotSqlDeployPath, now);
+        WriteErrorLog(logPath, "still failing");
+        var (svc, runner) = CreateService(dryRun: true);
+        PinClock(svc, now);
+
+        var result = await svc.RunSqlDeployAsync(config, _ => { }, CancellationToken.None);
+
+        Assert.True(result!.Success);
+        Assert.Equal(0, runner.BatCallCount);
+    }
+
+    [Fact]
+    public async Task RunSqlDeploy_CrossMidnightErrorLog_Fails()
+    {
+        var config = CreateConfig();
+        WriteSql(config.DeployedPath, "a.sql");
+        var start = new DateTime(2026, 10, 1, 23, 50, 0, DateTimeKind.Local);
+        var end = new DateTime(2026, 10, 2, 0, 10, 0, DateTimeKind.Local);
+        var endPath = SqlDeployErrorLog.PathFor(config.PilotSqlDeployPath, end);
+        var ticks = new Queue<DateTime>([start, end]);
+        var (svc, runner) = CreateService();
+        svc.LocalNow = () => ticks.Dequeue();
+        runner.OnCmd = _ => WriteErrorLog(endPath, "midnight error");
+
+        var result = await svc.RunSqlDeployAsync(config, _ => { }, CancellationToken.None);
+
+        Assert.False(result!.Success);
+        Assert.Contains(endPath, result.ErrorMessage, StringComparison.Ordinal);
+        Assert.DoesNotContain("deployerror_20261001.log", result.ErrorMessage, StringComparison.Ordinal);
     }
 }

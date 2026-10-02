@@ -23,9 +23,16 @@ public class WebSourceDeployService
     /// </summary>
     private static readonly string[] DefaultExcludeDirs = [".vs", "obj", "bin\\obj"];
 
+    private const int MaxErrorLogLines = 50;
+    private const int MaxErrorLogChars = 8000;
+    private static readonly Encoding Sjis = Encoding.GetEncoding("shift_jis");
+
     private readonly bool _dryRun;
     private readonly ILogger<WebSourceDeployService> _logger;
     private readonly IProcessRunner _processRunner;
+
+    /// <summary>SQL Server エラーログの日付に使うローカル時刻。本番は <see cref="DateTime.Now"/>。テストから差し替える。</summary>
+    internal Func<DateTime> LocalNow { get; set; } = () => DateTime.Now;
     private readonly string[] _excludeFiles;
     private readonly string[] _excludeDirs;
 
@@ -337,11 +344,24 @@ public class WebSourceDeployService
             if (!File.Exists(config.PilotSqlDeployBatPath))
                 return new WebSourceSqlDeployResult(false, null, $"SQL Server deploy.bat が見つかりません: {config.PilotSqlDeployBatPath}");
 
+            var startedLocal = LocalNow();
+            var startPath = SqlDeployErrorLog.PathFor(config.PilotSqlDeployPath, startedLocal);
+            var startBefore = SqlDeployErrorLog.Capture(startPath);
+
             onOutputLine($"SQL Server deploy.bat 実行: {config.PilotSqlDeployBatPath}");
             var batExitCode = await RunDeployBatAsync(
                 config.PilotSqlDeployPath, config.PilotSqlDeployBatPath, onOutputLine, ct);
-            if (batExitCode != 0)
-                return new WebSourceSqlDeployResult(false, batExitCode, $"SQL Server deploy.bat がエラー終了しました (exit code {batExitCode})");
+
+            var endedLocal = LocalNow();
+            var findings = ReadSqlServerErrorLogs(
+                config.PilotSqlDeployPath, startedLocal, endedLocal, startPath, startBefore);
+            var errorPaths = findings.Where(f => f.Result.HasNewError).Select(f => f.Path).ToList();
+            if (batExitCode != 0 || errorPaths.Count > 0)
+            {
+                EmitSqlServerErrorLogs(onOutputLine, findings);
+                return new WebSourceSqlDeployResult(
+                    false, batExitCode, BuildSqlServerBatFailureMessage(batExitCode, errorPaths));
+            }
         }
 
         if (hasMariaDb)
@@ -541,6 +561,106 @@ public class WebSourceDeployService
 
         error = "Shift-JIS / UTF-8（BOMなし）のいずれでもバイト列を再現できません";
         return false;
+    }
+
+    private static List<(string Path, SqlDeployErrorLogReadResult Result)> ReadSqlServerErrorLogs(
+        string deployRoot,
+        DateTime startedLocal,
+        DateTime endedLocal,
+        string startPath,
+        SqlDeployErrorLogSnapshot startBefore)
+    {
+        var startedUtc = ToUtc(startedLocal);
+        var findings = new List<(string Path, SqlDeployErrorLogReadResult Result)>
+        {
+            (startPath, SqlDeployErrorLog.ReadNewContent(startPath, startBefore, startedUtc, Sjis)),
+        };
+        if (endedLocal.Date != startedLocal.Date)
+        {
+            var endPath = SqlDeployErrorLog.PathFor(deployRoot, endedLocal);
+            findings.Add((endPath, SqlDeployErrorLog.ReadNewContent(
+                endPath, SqlDeployErrorLogSnapshot.Absent, startedUtc, Sjis)));
+        }
+
+        return findings;
+    }
+
+    private static DateTime ToUtc(DateTime value) => value.Kind switch
+    {
+        DateTimeKind.Utc => value,
+        DateTimeKind.Local => value.ToUniversalTime(),
+        _ => DateTime.SpecifyKind(value, DateTimeKind.Local).ToUniversalTime(),
+    };
+
+    /// <summary>
+    /// 今回分の本文を、合計で 50 行かつ 8,000 文字まで出す。超えたら省略行を 1 行足す。
+    /// </summary>
+    private static void EmitSqlServerErrorLogs(
+        Action<string> onOutputLine,
+        List<(string Path, SqlDeployErrorLogReadResult Result)> findings)
+    {
+        var emittedLines = 0;
+        var emittedChars = 0;
+        string? truncatedPath = null;
+
+        foreach (var finding in findings)
+        {
+            if (!finding.Result.HasNewError)
+                continue;
+
+            if (finding.Result.Unreadable || finding.Result.Content is null)
+            {
+                if (!TryEmitErrorLogLine(onOutputLine, $"エラーログを読めませんでした: {finding.Path}", ref emittedLines, ref emittedChars))
+                    truncatedPath = finding.Path;
+            }
+            else
+            {
+                foreach (var line in finding.Result.Content.Split(["\r\n", "\n", "\r"], StringSplitOptions.None))
+                {
+                    if (!TryEmitErrorLogLine(onOutputLine, line, ref emittedLines, ref emittedChars))
+                    {
+                        truncatedPath = finding.Path;
+                        break;
+                    }
+                }
+            }
+
+            if (truncatedPath is not null)
+                break;
+        }
+
+        if (truncatedPath is not null)
+            onOutputLine($"（以降省略） {truncatedPath}");
+    }
+
+    /// <returns>行全体を出せたら true。上限に達して打ち切ったら false。</returns>
+    private static bool TryEmitErrorLogLine(
+        Action<string> onOutputLine, string line, ref int emittedLines, ref int emittedChars)
+    {
+        if (emittedLines >= MaxErrorLogLines)
+            return false;
+
+        var remaining = MaxErrorLogChars - emittedChars;
+        if (remaining <= 0)
+            return false;
+
+        var piece = line.Length > remaining ? line[..remaining] : line;
+        onOutputLine(piece);
+        emittedChars += piece.Length;
+        emittedLines++;
+        return piece.Length == line.Length;
+    }
+
+    internal static string BuildSqlServerBatFailureMessage(int exitCode, IReadOnlyList<string> errorLogPaths)
+    {
+        if (errorLogPaths.Count == 0)
+            return $"SQL Server deploy.bat がエラー終了しました (exit code {exitCode})";
+
+        var paths = string.Join(", ", errorLogPaths);
+        if (exitCode != 0)
+            return $"SQL Server deploy.bat がエラー終了しました (exit code {exitCode})。エラーログ: {paths}";
+
+        return $"SQL Server deploy.bat は終了コード 0 でしたが、エラーログに出力があります: {paths}";
     }
 
     private Task<int> RunDeployBatAsync(
@@ -758,9 +878,10 @@ public class WebSourceDeployService
             }
         }
 
-        // Both で Web 成功＋SQL スキップのみのときは Web 適用済みのため「完了」。SqlOnly スキップは別経路。
-        LogLine(failed ? "ERROR" : "OK",
-            FormatOverallCompletionMessage(failed: failed, skippedOnly: false));
+        // Web 成功でも SQL 失敗なら中断。スキップ（Success=true）は完了のまま。SqlOnly は上の分岐。
+        var failedOverall = failed || sqlDeployResult is { Success: false };
+        LogLine(failedOverall ? "ERROR" : "OK",
+            FormatOverallCompletionMessage(failed: failedOverall, skippedOnly: false));
 
         return (results, sqlDeployResult);
     }
@@ -807,6 +928,97 @@ public record WebSourceDeployTargetResult(string TargetName, bool Success, strin
 /// <summary>SQL適用（PilotSqlDeployPath への SQL コピー＋deploy.bat 実行）の結果。</summary>
 /// <param name="Skipped">適用対象 *.sql が無く処理をスキップした場合 true（Result は success 相当）。</param>
 public record WebSourceSqlDeployResult(bool Success, int? ExitCode, string? ErrorMessage, bool Skipped = false);
+
+/// <summary>deployerror ログの起動前状態。ファイルが無いときは <see cref="SqlDeployErrorLogSnapshot.Absent"/>。</summary>
+internal readonly record struct SqlDeployErrorLogSnapshot(bool Exists, long Length, DateTime LastWriteTimeUtc)
+{
+    public static SqlDeployErrorLogSnapshot Absent { get; } = new(false, 0, default);
+}
+
+/// <summary>起動後のエラーログから切り出した今回分。</summary>
+/// <param name="HasNewError">空白以外の今回分がある、または復号・読み取りに失敗した。</param>
+/// <param name="Content">今回分の本文。エラーなし、または読めないときは null。</param>
+/// <param name="Unreadable">復号または読み取りに失敗した。このときも <paramref name="HasNewError"/> は true。</param>
+internal readonly record struct SqlDeployErrorLogReadResult(bool HasNewError, string? Content, bool Unreadable)
+{
+    public static SqlDeployErrorLogReadResult None { get; } = new(false, null, false);
+    public static SqlDeployErrorLogReadResult CouldNotRead { get; } = new(true, null, true);
+}
+
+/// <summary>
+/// Pilot SQL Server 適用の deployerror_yyyymmdd.log について、起動前と比べた今回分だけを取り出す。
+/// </summary>
+internal static class SqlDeployErrorLog
+{
+    public static string PathFor(string deployRoot, DateTime localTime) =>
+        Path.Combine(deployRoot, "log", $"deployerror_{localTime:yyyyMMdd}.log");
+
+    public static SqlDeployErrorLogSnapshot Capture(string path)
+    {
+        if (!File.Exists(path))
+            return SqlDeployErrorLogSnapshot.Absent;
+
+        var info = new FileInfo(path);
+        return new SqlDeployErrorLogSnapshot(true, info.Length, info.LastWriteTimeUtc);
+    }
+
+    /// <summary>
+    /// サイズが増えていれば増分だけ、新規・作り直しならファイル全体を返す。
+    /// 空白のみはエラーにしない。Shift-JIS で復号できない、または読めないときは本文なしのエラーにする。
+    /// </summary>
+    public static SqlDeployErrorLogReadResult ReadNewContent(
+        string path,
+        SqlDeployErrorLogSnapshot before,
+        DateTime startedAtUtc,
+        Encoding encoding)
+    {
+        if (!File.Exists(path))
+            return SqlDeployErrorLogReadResult.None;
+
+        byte[] bytes;
+        DateTime lastWriteUtc;
+        try
+        {
+            bytes = File.ReadAllBytes(path);
+            lastWriteUtc = File.GetLastWriteTimeUtc(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return SqlDeployErrorLogReadResult.CouldNotRead;
+        }
+
+        var created = !before.Exists;
+        var grew = bytes.LongLength > before.Length;
+        var touched = lastWriteUtc >= startedAtUtc.AddSeconds(-2);
+        if (!created && !grew && !touched)
+            return SqlDeployErrorLogReadResult.None;
+
+        var slice = grew && before.Exists
+            ? bytes.AsSpan((int)before.Length)
+            : bytes.AsSpan();
+
+        string text;
+        try
+        {
+            text = Strict(encoding).GetString(slice);
+        }
+        catch (DecoderFallbackException)
+        {
+            return SqlDeployErrorLogReadResult.CouldNotRead;
+        }
+
+        if (string.IsNullOrWhiteSpace(text))
+            return SqlDeployErrorLogReadResult.None;
+
+        return new SqlDeployErrorLogReadResult(true, text, false);
+    }
+
+    private static Encoding Strict(Encoding encoding) =>
+        Encoding.GetEncoding(
+            encoding.CodePage,
+            EncoderFallback.ExceptionFallback,
+            DecoderFallback.ExceptionFallback);
+}
 
 /// <summary>「Pilot環境適用」実行時にどのステップを実行するか（前回失敗した側だけの再実行に対応するため）。</summary>
 public enum WebSourceDeployStep
