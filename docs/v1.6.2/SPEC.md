@@ -92,11 +92,12 @@ docs/v1.6.2/                                  → 本 SPEC / 後続 PLAN・TASKS
 既存の `RunSqlDeployAsync` に合わせる。ログ文言は日本語。判定ロジックはテストできる static メソッドに分ける。
 
 ```csharp
-// bat 起動前のサイズと更新時刻を控え、戻ったあと「今回増えた本文」だけを失敗理由にする。
-// 同日の古い deployerror_yyyyMMdd.log が残っていても、今回触っていなければ成功のまま。
+// bat 起動前のサイズ・更新時刻・全文の SHA-256 を控え、戻ったあと「今回分の本文」だけを失敗理由にする。
+// 同日の古い deployerror_yyyyMMdd.log が残っていても、今回触っていなければ成功のまま（ロック中でも本文は読まない）。
+// 先頭が起動前の全文と一致するときだけ追記とみなし、それ以外の変化はファイル全体を今回分とする。
 var before = SqlDeployErrorLog.Capture(logPath);
 var batExitCode = await RunDeployBatAsync(...);
-var errorLog = SqlDeployErrorLog.ReadNewContent(logPath, before, Encoding.GetEncoding("shift_jis"));
+var errorLog = SqlDeployErrorLog.ReadNewContent(logPath, before, startedUtc, Encoding.GetEncoding("shift_jis"));
 if (batExitCode != 0 || errorLog.HasNewError)
     return new WebSourceSqlDeployResult(false, batExitCode, BuildSqlServerBatFailureMessage(...));
 ```

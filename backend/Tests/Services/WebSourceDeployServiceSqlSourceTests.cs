@@ -1015,6 +1015,28 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
     }
 
     [Fact]
+    public async Task RunSqlDeploy_FiftyLinesWithLeadingNewline_DoesNotEmitBlankOrSayTruncated()
+    {
+        var config = CreateConfig();
+        WriteSql(config.DeployedPath, "a.sql");
+        var now = new DateTime(2026, 10, 1, 15, 0, 0, DateTimeKind.Local);
+        var logPath = SqlDeployErrorLog.PathFor(config.PilotSqlDeployPath, now);
+        var body = "\r\n" + string.Join("\r\n", Enumerable.Range(0, 50).Select(i => $"err-line-{i:00}")) + "\r\n";
+        var (svc, runner) = CreateService();
+        PinClock(svc, now);
+        runner.OnCmd = _ => WriteErrorLog(logPath, body);
+        var logs = new List<string>();
+
+        var result = await svc.RunSqlDeployAsync(config, logs.Add, CancellationToken.None);
+
+        Assert.False(result!.Success);
+        Assert.Contains(logs, l => l == "err-line-00");
+        Assert.Contains(logs, l => l == "err-line-49");
+        Assert.DoesNotContain(logs, l => l.Length == 0);
+        Assert.DoesNotContain(logs, l => l.Contains("以降省略", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public async Task RunSqlDeploy_EmptyErrorLog_Succeeds()
     {
         var config = CreateConfig();

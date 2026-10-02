@@ -616,7 +616,7 @@ public class WebSourceDeployService
             }
             else
             {
-                var text = finding.Result.Content.TrimEnd('\r', '\n');
+                var text = finding.Result.Content.Trim('\r', '\n');
                 foreach (var line in text.Split(["\r\n", "\n", "\r"], StringSplitOptions.None))
                 {
                     if (!TryEmitErrorLogLine(onOutputLine, line, ref emittedLines, ref emittedChars))
@@ -965,7 +965,8 @@ internal static class SqlDeployErrorLog
             return SqlDeployErrorLogSnapshot.Absent;
 
         var info = new FileInfo(path);
-        info.Refresh();
+        var length = info.Length;
+        var lastWriteUtc = info.LastWriteTimeUtc;
         byte[]? hash = null;
         try
         {
@@ -976,7 +977,7 @@ internal static class SqlDeployErrorLog
             // 起動前にロックされていても、サイズと更新時刻は控える。中身は不明。
         }
 
-        return new SqlDeployErrorLogSnapshot(true, info.Length, info.LastWriteTimeUtc, hash);
+        return new SqlDeployErrorLogSnapshot(true, length, lastWriteUtc, hash);
     }
 
     /// <summary>
@@ -994,7 +995,6 @@ internal static class SqlDeployErrorLog
             return SqlDeployErrorLogReadResult.None;
 
         var info = new FileInfo(path);
-        info.Refresh();
         var created = !before.Exists;
         var grew = info.Length > before.Length;
         var touched = info.LastWriteTimeUtc >= startedAtUtc.AddSeconds(-2);
