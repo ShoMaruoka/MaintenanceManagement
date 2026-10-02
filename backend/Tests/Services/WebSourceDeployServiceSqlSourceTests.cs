@@ -701,9 +701,11 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
         var path = ErrorLogPath();
         var prefix = Sjis.GetBytes("previous\r\n");
         var added = Sjis.GetBytes("列名 'Unknown' が無効です");
-        File.WriteAllBytes(path, prefix.Concat(added).ToArray());
         var startedAt = new DateTime(2026, 10, 1, 6, 0, 0, DateTimeKind.Utc);
-        var before = new SqlDeployErrorLogSnapshot(true, prefix.Length, startedAt.AddHours(-1));
+        File.WriteAllBytes(path, prefix);
+        File.SetLastWriteTimeUtc(path, startedAt.AddHours(-1));
+        var before = SqlDeployErrorLog.Capture(path);
+        File.WriteAllBytes(path, prefix.Concat(added).ToArray());
 
         var result = ReadErrorLog(path, before, startedAt);
 
@@ -743,9 +745,11 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
     public void ReadNewContent_WhitespaceOnlyAppend_IsNotError()
     {
         var path = ErrorLogPath();
-        File.WriteAllText(path, "ABC   \r\n", Sjis);
         var startedAt = new DateTime(2026, 10, 1, 6, 0, 0, DateTimeKind.Utc);
-        var before = new SqlDeployErrorLogSnapshot(true, 3, startedAt.AddHours(-1));
+        File.WriteAllText(path, "ABC", Sjis);
+        File.SetLastWriteTimeUtc(path, startedAt.AddHours(-1));
+        var before = SqlDeployErrorLog.Capture(path);
+        File.AppendAllText(path, "   \r\n", Sjis);
 
         var result = ReadErrorLog(path, before, startedAt);
 
@@ -802,16 +806,74 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
     {
         var path = ErrorLogPath();
         var prefix = Sjis.GetBytes("OK\r\n");
+        var startedAt = new DateTime(2026, 10, 1, 6, 0, 0, DateTimeKind.Utc);
+        File.WriteAllBytes(path, prefix);
+        File.SetLastWriteTimeUtc(path, startedAt.AddHours(-1));
+        var before = SqlDeployErrorLog.Capture(path);
         // 0x81 は Shift-JIS の先行バイト。単体では文字にならず復号できない。
         File.WriteAllBytes(path, prefix.Concat(new byte[] { 0x81 }).ToArray());
-        var startedAt = new DateTime(2026, 10, 1, 6, 0, 0, DateTimeKind.Utc);
-        var before = new SqlDeployErrorLogSnapshot(true, prefix.Length, startedAt.AddHours(-1));
 
         var result = ReadErrorLog(path, before, startedAt);
 
         Assert.True(result.HasNewError);
         Assert.True(result.Unreadable);
         Assert.Null(result.Content);
+    }
+
+    [Fact]
+    public void ReadNewContent_LockedUnchangedFile_IsNotError()
+    {
+        var path = ErrorLogPath();
+        File.WriteAllText(path, "old error", Sjis);
+        var startedAt = DateTime.UtcNow;
+        File.SetLastWriteTimeUtc(path, startedAt.AddHours(-5));
+        var before = SqlDeployErrorLog.Capture(path);
+
+        using var locked = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+        var result = ReadErrorLog(path, before, startedAt);
+
+        Assert.False(result.HasNewError);
+        Assert.False(result.Unreadable);
+    }
+
+    [Fact]
+    public void ReadNewContent_RewrittenLongerFile_ReturnsWholeFile()
+    {
+        var path = ErrorLogPath();
+        var startedAt = new DateTime(2026, 10, 1, 6, 0, 0, DateTimeKind.Utc);
+        File.WriteAllText(path, "前回のエラー: 列名 'X' が無効です。\r\n", Sjis);
+        File.SetLastWriteTimeUtc(path, startedAt.AddHours(-5));
+        var before = SqlDeployErrorLog.Capture(path);
+        var rewritten = "今回のエラー: プロシージャ usp_Foo の作成に失敗しました。列名 'Y' が無効です。\r\n";
+        File.WriteAllText(path, rewritten, Sjis);
+
+        var result = ReadErrorLog(path, before, startedAt);
+
+        Assert.True(result.HasNewError);
+        Assert.Equal(rewritten, result.Content);
+    }
+
+    [Fact]
+    public void ReadNewContent_RewriteCuttingMultibyteChar_IsReadableWholeFile()
+    {
+        var path = ErrorLogPath();
+        var startedAt = new DateTime(2026, 10, 1, 6, 0, 0, DateTimeKind.Utc);
+        File.WriteAllText(path, "x", Sjis);
+        File.SetLastWriteTimeUtc(path, startedAt.AddHours(-5));
+        var before = SqlDeployErrorLog.Capture(path);
+        // 0x81 0x81 は 1 文字。1 バイト目で切ると先行バイトだけが残り、復号できない。
+        var rewrittenBytes = new byte[] { 0x81, 0x81 };
+        var rewritten = Sjis.GetString(rewrittenBytes);
+        File.WriteAllBytes(path, rewrittenBytes);
+
+        var strict = Encoding.GetEncoding(932, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback);
+        Assert.Throws<DecoderFallbackException>(() => strict.GetString(rewrittenBytes.AsSpan(1)));
+
+        var result = ReadErrorLog(path, before, startedAt);
+
+        Assert.True(result.HasNewError);
+        Assert.False(result.Unreadable);
+        Assert.Equal(rewritten, result.Content);
     }
 
     private static void PinClock(WebSourceDeployService svc, DateTime local) =>
@@ -903,6 +965,53 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
         var result = await svc.RunSqlDeployAsync(config, _ => { }, CancellationToken.None);
 
         Assert.True(result!.Success);
+    }
+
+    [Fact]
+    public async Task RunSqlDeploy_LockedUnchangedErrorLog_Succeeds()
+    {
+        var config = CreateConfig();
+        WriteSql(config.DeployedPath, "a.sql");
+        var now = new DateTime(2026, 10, 1, 15, 0, 0, DateTimeKind.Local);
+        var logPath = SqlDeployErrorLog.PathFor(config.PilotSqlDeployPath, now);
+        WriteErrorLog(logPath, "yesterday error");
+        File.SetLastWriteTimeUtc(logPath, now.ToUniversalTime().AddHours(-5));
+        var (svc, runner) = CreateService();
+        PinClock(svc, now);
+        FileStream? locked = null;
+        runner.OnCmd = _ => locked = new FileStream(logPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+
+        try
+        {
+            var result = await svc.RunSqlDeployAsync(config, _ => { }, CancellationToken.None);
+            Assert.True(result!.Success);
+        }
+        finally
+        {
+            locked?.Dispose();
+        }
+    }
+
+    [Fact]
+    public async Task RunSqlDeploy_ExactlyFiftyLinesWithTrailingNewline_DoesNotSayTruncated()
+    {
+        var config = CreateConfig();
+        WriteSql(config.DeployedPath, "a.sql");
+        var now = new DateTime(2026, 10, 1, 15, 0, 0, DateTimeKind.Local);
+        var logPath = SqlDeployErrorLog.PathFor(config.PilotSqlDeployPath, now);
+        var body = string.Join("\r\n", Enumerable.Range(0, 50).Select(i => $"err-line-{i:00}")) + "\r\n";
+        var (svc, runner) = CreateService();
+        PinClock(svc, now);
+        runner.OnCmd = _ => WriteErrorLog(logPath, body);
+        var logs = new List<string>();
+
+        var result = await svc.RunSqlDeployAsync(config, logs.Add, CancellationToken.None);
+
+        Assert.False(result!.Success);
+        Assert.Contains(logs, l => l == "err-line-00");
+        Assert.Contains(logs, l => l == "err-line-49");
+        Assert.DoesNotContain(logs, l => l.Length == 0);
+        Assert.DoesNotContain(logs, l => l.Contains("以降省略", StringComparison.Ordinal));
     }
 
     [Fact]

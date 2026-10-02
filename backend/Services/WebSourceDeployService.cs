@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
@@ -615,7 +616,8 @@ public class WebSourceDeployService
             }
             else
             {
-                foreach (var line in finding.Result.Content.Split(["\r\n", "\n", "\r"], StringSplitOptions.None))
+                var text = finding.Result.Content.TrimEnd('\r', '\n');
+                foreach (var line in text.Split(["\r\n", "\n", "\r"], StringSplitOptions.None))
                 {
                     if (!TryEmitErrorLogLine(onOutputLine, line, ref emittedLines, ref emittedChars))
                     {
@@ -929,10 +931,14 @@ public record WebSourceDeployTargetResult(string TargetName, bool Success, strin
 /// <param name="Skipped">適用対象 *.sql が無く処理をスキップした場合 true（Result は success 相当）。</param>
 public record WebSourceSqlDeployResult(bool Success, int? ExitCode, string? ErrorMessage, bool Skipped = false);
 
-/// <summary>deployerror ログの起動前状態。ファイルが無いときは <see cref="SqlDeployErrorLogSnapshot.Absent"/>。</summary>
-internal readonly record struct SqlDeployErrorLogSnapshot(bool Exists, long Length, DateTime LastWriteTimeUtc)
+/// <summary>
+/// deployerror ログの起動前状態。ファイルが無いときは <see cref="SqlDeployErrorLogSnapshot.Absent"/>。
+/// <paramref name="ContentHash"/> は起動前の全文ハッシュ。読めなかったときは null。
+/// </summary>
+internal readonly record struct SqlDeployErrorLogSnapshot(
+    bool Exists, long Length, DateTime LastWriteTimeUtc, byte[]? ContentHash = null)
 {
-    public static SqlDeployErrorLogSnapshot Absent { get; } = new(false, 0, default);
+    public static SqlDeployErrorLogSnapshot Absent { get; } = new(false, 0, default, null);
 }
 
 /// <summary>起動後のエラーログから切り出した今回分。</summary>
@@ -959,12 +965,24 @@ internal static class SqlDeployErrorLog
             return SqlDeployErrorLogSnapshot.Absent;
 
         var info = new FileInfo(path);
-        return new SqlDeployErrorLogSnapshot(true, info.Length, info.LastWriteTimeUtc);
+        info.Refresh();
+        byte[]? hash = null;
+        try
+        {
+            hash = SHA256.HashData(File.ReadAllBytes(path));
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // 起動前にロックされていても、サイズと更新時刻は控える。中身は不明。
+        }
+
+        return new SqlDeployErrorLogSnapshot(true, info.Length, info.LastWriteTimeUtc, hash);
     }
 
     /// <summary>
-    /// サイズが増えていれば増分だけ、新規・作り直しならファイル全体を返す。
-    /// 空白のみはエラーにしない。Shift-JIS で復号できない、または読めないときは本文なしのエラーにする。
+    /// サイズと更新時刻が変わっていなければ本文を読まずにエラーなしとする。
+    /// 増えていて先頭が起動前の内容と一致するときだけ増分を返す。それ以外の変化はファイル全体。
+    /// 空白のみはエラーにしない。変わったファイルを読めない、または Shift-JIS で復号できないときは本文なしのエラーにする。
     /// </summary>
     public static SqlDeployErrorLogReadResult ReadNewContent(
         string path,
@@ -975,27 +993,25 @@ internal static class SqlDeployErrorLog
         if (!File.Exists(path))
             return SqlDeployErrorLogReadResult.None;
 
+        var info = new FileInfo(path);
+        info.Refresh();
+        var created = !before.Exists;
+        var grew = info.Length > before.Length;
+        var touched = info.LastWriteTimeUtc >= startedAtUtc.AddSeconds(-2);
+        if (!created && !grew && !touched)
+            return SqlDeployErrorLogReadResult.None;
+
         byte[] bytes;
-        DateTime lastWriteUtc;
         try
         {
             bytes = File.ReadAllBytes(path);
-            lastWriteUtc = File.GetLastWriteTimeUtc(path);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             return SqlDeployErrorLogReadResult.CouldNotRead;
         }
 
-        var created = !before.Exists;
-        var grew = bytes.LongLength > before.Length;
-        var touched = lastWriteUtc >= startedAtUtc.AddSeconds(-2);
-        if (!created && !grew && !touched)
-            return SqlDeployErrorLogReadResult.None;
-
-        var slice = grew && before.Exists
-            ? bytes.AsSpan((int)before.Length)
-            : bytes.AsSpan();
+        var slice = IsAppend(bytes, before) ? bytes.AsSpan((int)before.Length) : bytes.AsSpan();
 
         string text;
         try
@@ -1011,6 +1027,18 @@ internal static class SqlDeployErrorLog
             return SqlDeployErrorLogReadResult.None;
 
         return new SqlDeployErrorLogReadResult(true, text, false);
+    }
+
+    /// <summary>先頭が起動前の全文と一致し、かつ長くなっているときだけ追記とみなす。</summary>
+    private static bool IsAppend(byte[] bytes, SqlDeployErrorLogSnapshot before)
+    {
+        if (!before.Exists || before.ContentHash is null || bytes.LongLength <= before.Length)
+            return false;
+        if (before.Length > int.MaxValue)
+            return false;
+
+        var prefixHash = SHA256.HashData(bytes.AsSpan(0, (int)before.Length));
+        return prefixHash.AsSpan().SequenceEqual(before.ContentHash);
     }
 
     private static Encoding Strict(Encoding encoding) =>
