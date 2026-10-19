@@ -43,6 +43,17 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
         /// <summary>cmd.exe 起動時、終了コードを返す直前に呼ぶ。既定は何もしない。</summary>
         public Action<string?>? OnCmd { get; set; }
 
+        /// <summary>web.config 切替 bat（*.DC.Pilot.bat）の終了コード。既定 0。SQL deploy.bat とは別管理。</summary>
+        public int WebConfigBatExitCode { get; set; }
+
+        public static bool IsWebConfigBat(string arguments) =>
+            arguments.Contains(".DC.Pilot.bat", StringComparison.OrdinalIgnoreCase);
+
+        public IEnumerable<(string FileName, string Arguments, string? WorkingDirectory)> WebConfigBatCalls =>
+            Calls.Where(c =>
+                string.Equals(c.FileName, "cmd.exe", StringComparison.OrdinalIgnoreCase)
+                && IsWebConfigBat(c.Arguments));
+
         public Task<int> RunAsync(
             string fileName,
             string arguments,
@@ -51,6 +62,13 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
             CancellationToken ct)
         {
             Calls.Add((fileName, arguments, workingDirectory));
+            if (string.Equals(fileName, "cmd.exe", StringComparison.OrdinalIgnoreCase)
+                && IsWebConfigBat(arguments))
+            {
+                // web.config 切替 bat は SQL deploy.bat の OnCmd / CmdExitCode と独立して扱う。
+                return Task.FromResult(WebConfigBatExitCode);
+            }
+
             if (string.Equals(fileName, "cmd.exe", StringComparison.OrdinalIgnoreCase))
             {
                 OnCmd?.Invoke(workingDirectory);
@@ -69,8 +87,11 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
                 .Where(p => p is not null)
                 .Select(p => p!.Value);
 
+        /// <summary>SQL deploy.bat の起動回数（web.config 切替 bat は含まない）。</summary>
         public int BatCallCount =>
-            Calls.Count(c => string.Equals(c.FileName, "cmd.exe", StringComparison.OrdinalIgnoreCase));
+            Calls.Count(c =>
+                string.Equals(c.FileName, "cmd.exe", StringComparison.OrdinalIgnoreCase)
+                && !IsWebConfigBat(c.Arguments));
 
         public bool RanBat(string batPath, string workingDirectory) =>
             Calls.Any(c =>
@@ -118,6 +139,16 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
             PilotMariaDbSqlDeployPath = pilotMaria,
             PilotSqlDbNameReplacements = [],
         };
+    }
+
+    /// <summary>{dir}\deploy\kaios.DC.Pilot.bat を作る（web.config 切替 bat。Windows は大文字小文字を区別しない）。</summary>
+    private static string WriteWebConfigBat(string dir, string systemName = "kaios")
+    {
+        var deployDir = Path.Combine(dir, "deploy");
+        Directory.CreateDirectory(deployDir);
+        var batPath = Path.Combine(deployDir, $"{systemName}.DC.Pilot.bat");
+        File.WriteAllText(batPath, "@echo off\r\nexit /b 0\r\n");
+        return batPath;
     }
 
     private static void WriteSql(string dir, string fileName, string body = "SELECT 1;")
@@ -419,7 +450,7 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
         var pilot1 = Path.Combine(_root, "pilot1");
         Directory.CreateDirectory(webSrc);
         Directory.CreateDirectory(pilot1);
-        File.WriteAllText(Path.Combine(webSrc, "Web.config.DC.kaios.pilot"), "<configuration />");
+        WriteWebConfigBat(webSrc);
 
         var config = CreateConfig();
         config.WebSourcePath = webSrc;
@@ -452,8 +483,8 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
         var pilot1 = Path.Combine(_root, "pilot1");
         Directory.CreateDirectory(webSrc);
         Directory.CreateDirectory(pilot1);
-        // Fake はファイルを運ばない。非 DryRun の web.config 適用はコピー先を見る。
-        File.WriteAllText(Path.Combine(pilot1, "Web.config.DC.kaios.pilot"), "<configuration />");
+        // Fake はファイルを運ばない。非 DryRun の web.config 切替 bat はコピー先を見る。
+        WriteWebConfigBat(pilot1);
 
         var config = CreateConfig();
         config.WebSourcePath = webSrc;
@@ -512,6 +543,181 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
         Assert.Equal("❌ Pilot環境適用が中断されました", messages[^1]);
     }
 
+    private async Task<(List<string> Messages, List<WebSourceDeployTargetResult> Targets, WebSourceSqlDeployResult? Sql)> RunBoth(
+        WebSourceDeployService svc, DbConfig config)
+    {
+        var channel = Channel.CreateUnbounded<LogEntry>();
+        var (targets, sql) = await svc.ExecuteAsync(config, channel.Writer, CancellationToken.None, WebSourceDeployStep.Both);
+        channel.Writer.Complete();
+        var messages = new List<string>();
+        await foreach (var e in channel.Reader.ReadAllAsync())
+            messages.Add(e.Message);
+        return (messages, targets, sql);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WebConfigBat_RunsOncePerPilot_FromEachDestDeployDir()
+    {
+        var webSrc = Path.Combine(_root, "WebSrcBat1");
+        var pilot1 = Path.Combine(_root, "pilot1bat");
+        var pilot2 = Path.Combine(_root, "pilot2bat");
+        Directory.CreateDirectory(webSrc);
+        var bat1 = WriteWebConfigBat(pilot1);
+        var bat2 = WriteWebConfigBat(pilot2);
+
+        var config = CreateConfig();
+        config.WebSourcePath = webSrc;
+        config.PilotTargets =
+        [
+            new PilotTarget { Name = "pilot1", DestWebSourcePath = pilot1, DestImagePath = "" },
+            new PilotTarget { Name = "pilot2", DestWebSourcePath = pilot2, DestImagePath = "" },
+        ];
+
+        var (svc, runner) = CreateService();
+        var (_, targets, _) = await RunBoth(svc, config);
+
+        Assert.All(targets, t => Assert.True(t.Success));
+        var calls = runner.WebConfigBatCalls.ToList();
+        Assert.Equal(2, calls.Count);
+        Assert.Contains(bat1, calls[0].Arguments, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(bat2, calls[1].Arguments, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WebConfigBat_UsesPushdWithQuotedBatPath()
+    {
+        var webSrc = Path.Combine(_root, "WebSrcBat2");
+        var pilot1 = Path.Combine(_root, "pilot1bat2");
+        Directory.CreateDirectory(webSrc);
+        var bat = WriteWebConfigBat(pilot1);
+
+        var config = CreateConfig();
+        config.WebSourcePath = webSrc;
+        config.PilotTargets =
+        [
+            new PilotTarget { Name = "pilot1", DestWebSourcePath = pilot1, DestImagePath = "" },
+        ];
+
+        var (svc, runner) = CreateService();
+        await RunBoth(svc, config);
+
+        var call = Assert.Single(runner.WebConfigBatCalls);
+        Assert.Contains($"pushd \"{Path.Combine(pilot1, "deploy")}\"", call.Arguments, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains($"\"{bat}\"", call.Arguments, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WebConfigBat_Missing_FailsTargetAndSkipsSql()
+    {
+        var webSrc = Path.Combine(_root, "WebSrcBat3");
+        var pilot1 = Path.Combine(_root, "pilot1bat3");
+        var pilot2 = Path.Combine(_root, "pilot2bat3");
+        Directory.CreateDirectory(webSrc);
+        Directory.CreateDirectory(pilot1);
+        WriteWebConfigBat(pilot2);
+
+        var config = CreateConfig();
+        config.WebSourcePath = webSrc;
+        config.PilotTargets =
+        [
+            new PilotTarget { Name = "pilot1", DestWebSourcePath = pilot1, DestImagePath = "" },
+            new PilotTarget { Name = "pilot2", DestWebSourcePath = pilot2, DestImagePath = "" },
+        ];
+        WriteSql(config.DeployedPath, "a.sql");
+        Directory.CreateDirectory(config.MariaDbDeployedPath);
+
+        var (svc, runner) = CreateService();
+        var (messages, targets, sql) = await RunBoth(svc, config);
+
+        var only = Assert.Single(targets);
+        Assert.False(only.Success);
+        Assert.Contains("DC.Pilot.bat", only.ErrorMessage, StringComparison.OrdinalIgnoreCase);
+        Assert.Null(sql);
+        Assert.Empty(runner.WebConfigBatCalls);
+        Assert.Equal(0, runner.BatCallCount);
+        Assert.Equal("❌ Pilot環境適用が中断されました", messages[^1]);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WebConfigBat_NonZeroExit_FailsTargetAndSkipsNextPilotAndSql()
+    {
+        var webSrc = Path.Combine(_root, "WebSrcBat4");
+        var pilot1 = Path.Combine(_root, "pilot1bat4");
+        var pilot2 = Path.Combine(_root, "pilot2bat4");
+        Directory.CreateDirectory(webSrc);
+        WriteWebConfigBat(pilot1);
+        WriteWebConfigBat(pilot2);
+
+        var config = CreateConfig();
+        config.WebSourcePath = webSrc;
+        config.PilotTargets =
+        [
+            new PilotTarget { Name = "pilot1", DestWebSourcePath = pilot1, DestImagePath = "" },
+            new PilotTarget { Name = "pilot2", DestWebSourcePath = pilot2, DestImagePath = "" },
+        ];
+        WriteSql(config.DeployedPath, "a.sql");
+        Directory.CreateDirectory(config.MariaDbDeployedPath);
+
+        var (svc, runner) = CreateService();
+        runner.WebConfigBatExitCode = 3;
+        var (messages, targets, sql) = await RunBoth(svc, config);
+
+        var only = Assert.Single(targets);
+        Assert.False(only.Success);
+        Assert.Contains("exit code 3", only.ErrorMessage, StringComparison.Ordinal);
+        Assert.Null(sql);
+        Assert.Single(runner.WebConfigBatCalls);
+        Assert.Equal(0, runner.BatCallCount);
+        Assert.Equal("❌ Pilot環境適用が中断されました", messages[^1]);
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WebConfigBat_DryRun_ChecksSourceAndDoesNotLaunchProcess()
+    {
+        var webSrc = Path.Combine(_root, "WebSrcBat5");
+        var pilot1 = Path.Combine(_root, "pilot1bat5");
+        Directory.CreateDirectory(pilot1);
+        var srcBat = WriteWebConfigBat(webSrc);
+
+        var config = CreateConfig();
+        config.WebSourcePath = webSrc;
+        config.PilotTargets =
+        [
+            new PilotTarget { Name = "pilot1", DestWebSourcePath = pilot1, DestImagePath = "" },
+        ];
+
+        var (svc, runner) = CreateService(dryRun: true);
+        var (messages, targets, _) = await RunBoth(svc, config);
+
+        Assert.True(targets.Single().Success);
+        Assert.Empty(runner.Calls);
+        Assert.Contains(messages, m =>
+            m.Contains("[DRY-RUN]", StringComparison.Ordinal)
+            && m.Contains(srcBat, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task ExecuteAsync_WebConfigBat_DryRun_MissingInSource_Fails()
+    {
+        var webSrc = Path.Combine(_root, "WebSrcBat6");
+        var pilot1 = Path.Combine(_root, "pilot1bat6");
+        Directory.CreateDirectory(webSrc);
+        // コピー先にだけ bat がある場合でも、DryRun はコピー元を検査するため失敗する。
+        WriteWebConfigBat(pilot1);
+
+        var config = CreateConfig();
+        config.WebSourcePath = webSrc;
+        config.PilotTargets =
+        [
+            new PilotTarget { Name = "pilot1", DestWebSourcePath = pilot1, DestImagePath = "" },
+        ];
+
+        var (svc, _) = CreateService(dryRun: true);
+        var (_, targets, _) = await RunBoth(svc, config);
+
+        Assert.False(targets.Single().Success);
+    }
+
     private static List<(string Src, string Dest)> ParseDryRunCopies(IEnumerable<string> messages)
     {
         var result = new List<(string, string)>();
@@ -550,7 +756,7 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
         var pilot1 = Path.Combine(_root, "pilot1b");
         Directory.CreateDirectory(webSrc);
         Directory.CreateDirectory(pilot1);
-        File.WriteAllText(Path.Combine(webSrc, "Web.config.DC.kaios.pilot"), "<configuration />");
+        WriteWebConfigBat(webSrc);
 
         var config = CreateConfig();
         config.WebSourcePath = webSrc;
@@ -583,7 +789,7 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
         var pilot1 = Path.Combine(_root, "pilot1c");
         Directory.CreateDirectory(webSrc);
         Directory.CreateDirectory(pilot1);
-        File.WriteAllText(Path.Combine(webSrc, "Web.config.DC.kaios.pilot"), "<configuration />");
+        WriteWebConfigBat(webSrc);
 
         var config = CreateConfig();
         config.WebSourcePath = webSrc;
@@ -622,7 +828,7 @@ public class WebSourceDeployServiceSqlSourceTests : IDisposable
         Directory.CreateDirectory(webSrc);
         Directory.CreateDirectory(pilot1);
         Directory.CreateDirectory(common);
-        File.WriteAllText(Path.Combine(webSrc, "Web.config.DC.kaios.pilot"), "<configuration />");
+        WriteWebConfigBat(webSrc);
         File.WriteAllText(Path.Combine(common, "shared.png"), "x");
 
         var config = CreateConfig();

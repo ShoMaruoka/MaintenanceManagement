@@ -223,7 +223,7 @@ export default function WebSourcePrepare() {
         STG サーバーの Web ソース（公開フォルダ）を pilot1 → pilot2 の順に自動でコピーします（削除同期なしの全量コピーのみ）。
         続けて画像情報準備の Images / news / pdf を、各 pilot の Web ルート直下の同名フォルダへコピーします。
         共通画像フォルダは別系統で、各 pilot の Images\products へコピーします。
-        各 pilot 側でパイロット用 Web.config（例: Web.config.DC.kaios.pilot）を web.config として適用します。
+        各 pilot へのコピー後、その pilot 側の deploy フォルダの切替 bat（例: deploy\Kaios.DC.Pilot.bat / deploy\Gos.DC.Pilot.bat）を実行して web.config を切り替えます。
         pilot1 が失敗した場合、pilot2 は実行されません。
         すべて成功した場合、続けて SQL ファイルの pilot 環境への適用（コピー＋View DB名置換＋deploy.bat実行）を行います。
       </div>

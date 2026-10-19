@@ -174,34 +174,44 @@ public class WebSourceDeployService
     }
 
     /// <summary>
-    /// コピー先のパイロット用 Web.config を web.config として上書きする。
-    /// ファイル名は Web.config.DC.{dbConfigName}.pilot（例: kaios → Web.config.DC.kaios.pilot）。
-    /// dryRun=true の場合はコピー元（webSourcePath）側の存在チェックのみ行い、上書きしない。
-    /// dryRun=false の場合はコピー先（destWebSourcePath）側のファイルを web.config へ上書きする。
-    /// ソースファイル（.pilot）は削除しない。
+    /// コピー先の deploy\{dbConfigName}.DC.Pilot.bat（例: kaios → Kaios.DC.Pilot.bat）を実行し、
+    /// pilot 用 web.config に切り替える。bat は STG の Web ソースに含まれ、robocopy でコピー先へ運ばれる。
+    /// dryRun=true の場合はコピー元（webSourcePath）側の存在チェックとログのみで、bat は実行しない。
+    /// dryRun=false の場合はコピー先（destWebSourcePath）側の bat を実行する。
+    /// コピー先は UNC パスのことがあり、cmd.exe は UNC を作業フォルダにできないため pushd で移動してから実行する。
     /// </summary>
-    /// <returns>存在確認に使ったパイロット用ファイルのフルパス（ログ用）。</returns>
-    public static string ApplyPilotWebConfig(
+    /// <returns>存在確認に使った bat のフルパス（ログ用）。</returns>
+    /// <exception cref="FileNotFoundException">bat が存在しない。</exception>
+    /// <exception cref="InvalidOperationException">bat が 0 以外の終了コードで終了した。</exception>
+    private async Task<string> RunPilotWebConfigBatAsync(
         string webSourcePath,
         string destWebSourcePath,
         string dbConfigName,
-        bool dryRun)
+        Action<string> onOutputLine,
+        CancellationToken ct)
     {
-        var sourceName = $"Web.config.DC.{dbConfigName}.pilot";
+        var batName = $"{dbConfigName}.DC.Pilot.bat";
         // DryRun 時は robocopy が走らないため、コピー先ではなくコピー元（STG）の存在を検査する。
-        var appliedSourcePath = Path.Combine(dryRun ? webSourcePath : destWebSourcePath, sourceName);
+        var deployDir = Path.Combine(_dryRun ? webSourcePath : destWebSourcePath, "deploy");
+        var batPath = Path.Combine(deployDir, batName);
 
-        if (!File.Exists(appliedSourcePath))
-            throw new FileNotFoundException(
-                $"パイロット用 web.config が見つかりません: {appliedSourcePath}", appliedSourcePath);
+        if (!File.Exists(batPath))
+            throw new FileNotFoundException($"web.config 切替 bat が見つかりません: {batPath}", batPath);
 
-        if (!dryRun)
+        if (_dryRun)
         {
-            var destPath = Path.Combine(destWebSourcePath, "web.config");
-            File.Copy(appliedSourcePath, destPath, overwrite: true);
+            onOutputLine($"[DRY-RUN] web.config 切替 bat 実行: {batPath}");
+            return batPath;
         }
 
-        return appliedSourcePath;
+        onOutputLine($"web.config 切替 bat 実行: {batPath}");
+        var arguments = $"/c \"chcp 932 > nul && pushd \"{deployDir}\" && \"{batPath}\"\"";
+        var exitCode = await _processRunner.RunAsync("cmd.exe", arguments, null, onOutputLine, ct);
+        if (exitCode != 0)
+            throw new InvalidOperationException(
+                $"web.config 切替 bat がエラー終了しました (exit code {exitCode}): {batPath}");
+
+        return batPath;
     }
 
     /// <summary>
@@ -681,7 +691,7 @@ public class WebSourceDeployService
     /// <summary>
     /// DbConfig.PilotTargets を pilot1 → pilot2 の順に処理し、成功した場合は続けて SQL 適用
     /// （PilotSqlDeployPath への SQL コピー＋deploy.bat 実行）を行う。
-    /// あるターゲットで robocopy がエラー終了、またはパイロット用 web.config 適用が失敗した場合、
+    /// あるターゲットで robocopy がエラー終了、または web.config 切替 bat の実行が失敗した場合、
     /// 以降のターゲット・SQL 適用ステップはスキップする。
     /// 誤操作によるファイル消失を避けるため、コピーは常に /E（削除同期なし）で行う（/MIR は使用しない）。
     /// SQL 適用の成否は Web ソースコピーとは独立した結果として返す（互いのステータスに影響しない）。
@@ -837,15 +847,15 @@ public class WebSourceDeployService
                 }
 
                 var dryRunTag = _dryRun ? " [DRY-RUN]" : "";
-                var appliedSourcePath = ApplyPilotWebConfig(
+                LogLine("STEP", $"▶ {target.Name} web.config 切替開始");
+                var batPath = await RunPilotWebConfigBatAsync(
                     webSourcePath: config.WebSourcePath,
                     destWebSourcePath: target.DestWebSourcePath,
                     dbConfigName: config.Name,
-                    dryRun: _dryRun);
-                var lastWrite = File.GetLastWriteTime(appliedSourcePath);
+                    onOutputLine: line => LogLine("DETAIL", line),
+                    ct: ct);
                 LogLine("OK",
-                    $"{target.Name}: {Path.GetFileName(appliedSourcePath)} を web.config として適用しました" +
-                    $"（更新日時: {lastWrite:yyyy-MM-dd HH:mm:ss}）{dryRunTag}");
+                    $"{target.Name}: web.config 切替 bat を実行しました（{Path.GetFileName(batPath)}）{dryRunTag}");
 
                 results.Add(new WebSourceDeployTargetResult(target.Name, true, null));
             }

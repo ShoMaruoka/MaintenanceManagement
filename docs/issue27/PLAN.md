@@ -16,7 +16,7 @@ Issue #25 で実装済みの「Pilot環境適用」（`WebSourceDeployService` /
 
 - **画像コピーは既存ターゲットループ内のステップとして追加**: `ExecuteAsync` の `foreach (var target in config.PilotTargets)` 内、
   Files コピーの後・パイロット用 web.config 適用の前に挿入する。専用のステップ種別（`WebSourceDeployStep`）は増やさない。
-  （注: Issue #25 当時は「web.config 置換」。現行はファイル差し替え。`docs/pilot-webconfig-file-swap`）
+  （注: Issue #25 当時は「web.config 置換」。現行は pilot 側 bat の実行。`docs/pilot-webconfig-bat`、経緯は `docs/pilot-webconfig-file-swap`）
   結果も専用レコードを作らず、既存の `WebSourceDeployTargetResult`（pilot1/pilot2）に内包する。
 - **コピー処理は既存 `RunRobocopyAsync` をそのまま再利用**: 除外設定・DryRun・キャンセル時 Kill・終了コード判定・
   パス検証（`ValidateDeployPaths`）をすべて共有できるため、画像専用のコピー実装は作らない。

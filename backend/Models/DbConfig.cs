@@ -4,7 +4,7 @@ public class DbConfig
 {
     /// <summary>
     /// システム識別名（例: kaios / gos）。
-    /// pilot 用 Web.config のファイル名（Web.config.DC.{Name}.pilot）の導出にも使用される。
+    /// pilot の web.config 切替 bat のファイル名（deploy\{Name}.DC.Pilot.bat）の導出にも使用される。
     /// </summary>
     public string Name { get; set; } = "";
 

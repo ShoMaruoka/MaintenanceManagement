@@ -140,8 +140,9 @@ POST /api/web-source-prepare/{dbName}/stream
 ## 7. web.config の適用仕様（廃止・移行済み）
 
 > **【廃止】** 本節の接続文字列部分置換（`PilotConnectionStrings` / `ReplaceConnectionStrings`）は廃止した。  
-> **現行仕様**: コピー先の `Web.config.DC.{DbConfig.Name}.pilot` を `web.config` として上書きする。  
-> 詳細は [`docs/pilot-webconfig-file-swap/SPEC.md`](./pilot-webconfig-file-swap/SPEC.md) を参照。  
+> **現行仕様**: 各 pilot へのコピー後、コピー先の `deploy\{DbConfig.Name}.DC.Pilot.bat`（例: `Kaios.DC.Pilot.bat` / `Gos.DC.Pilot.bat`）を実行して `web.config` を切り替える。  
+> 詳細は [`docs/pilot-webconfig-bat/SPEC.md`](./pilot-webconfig-bat/SPEC.md) を参照。  
+> （中間の方式だった「`Web.config.DC.{Name}.pilot` の上書きコピー」は [`docs/pilot-webconfig-file-swap/SPEC.md`](./pilot-webconfig-file-swap/SPEC.md) に記録。bat 実行方式に置き換え済み。）  
 > 実サーバーの `appsettings.json` に `PilotConnectionStrings` が残っていてもバインドは無視されるが、手動削除を推奨する。
 
 ### 7.0 旧仕様（歴史記録・Issue #25 実装当時）

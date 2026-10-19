@@ -1,5 +1,8 @@
 # Spec: Pilot環境適用の web.config をパイロット用ファイル差し替えに変更
 
+> **【置き換え済み】** 本方式（`Web.config.DC.{Name}.pilot` の上書きコピー）は、コピー先 `deploy\{Name}.DC.Pilot.bat` を実行する方式に変更した。
+> 現行仕様は [`docs/pilot-webconfig-bat/SPEC.md`](../pilot-webconfig-bat/SPEC.md) を参照。本ファイルは経緯の記録として残す。
+
 ## 関連ドキュメント
 
 - `docs/SPEC_ISSUE25_WEBSOURCE_PILOT_DEPLOY.md`（Issue #25: 接続文字列置換の現行仕様）
