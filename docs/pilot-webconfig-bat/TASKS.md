@@ -26,6 +26,7 @@ T1 → T2 → [Checkpoint A] → T3 → T4 → [Checkpoint B] → Done
 `WebSourceDeployService` に `RunPilotWebConfigBatAsync` を追加し、`ExecuteAsync` の `ApplyPilotWebConfig` 呼び出し（現 840〜848 行目）を置き換える。`ApplyPilotWebConfig` は削除する。
 
 **Acceptance criteria:**
+
 - [x] 実行時は `{DestWebSourcePath}\deploy\{Name}.DC.Pilot.bat`、DryRun 時は `{WebSourcePath}\deploy\{Name}.DC.Pilot.bat` の存在を確認する
 - [x] 欠落時は `FileNotFoundException`（メッセージにパスを含む）
 - [x] 実行時は `cmd.exe /c "chcp 932 > nul && pushd "{deployDir}" && "{batPath}""` で起動し、出力を `DETAIL` ログに流す
@@ -36,11 +37,13 @@ T1 → T2 → [Checkpoint A] → T3 → T4 → [Checkpoint B] → Done
 - [x] `ApplyPilotWebConfig` がソースから削除されている
 
 **Verification:**
+
 - [x] `cd backend && dotnet build` 成功
 
 **Dependencies:** None
 
 **Files:**
+
 - `backend/Services/WebSourceDeployService.cs`
 - `backend/Models/DbConfig.cs`（コメントのみ）
 
@@ -56,6 +59,7 @@ T1 → T2 → [Checkpoint A] → T3 → T4 → [Checkpoint B] → Done
 `.pilot` ファイルを置いて Web ステップを成功させている既存テスト（422 / 456 / 553 / 586 / 625 行目付近）を、`deploy\kaios.DC.Pilot.bat` を置く形に変える。`FakeProcessRunner` は cmd 呼び出しを区別しないため、web.config 切替 bat と SQL deploy.bat を引数で区別できるよう拡張する。
 
 **Acceptance criteria:**
+
 - [x] 既存テストが新方式で通る（SQL エラーログ系テストの前提が崩れない）
 - [x] 新規: bat 欠落でターゲット失敗・SQL 適用が実行されない
 - [x] 新規: bat 終了コード ≠ 0 で失敗し、pilot2 が実行されない
@@ -64,11 +68,13 @@ T1 → T2 → [Checkpoint A] → T3 → T4 → [Checkpoint B] → Done
 - [x] 新規: 起動引数に `pushd` と bat のフルパスが含まれる
 
 **Verification:**
+
 - [x] `cd backend && dotnet test` 成功
 
 **Dependencies:** Task 1
 
 **Files:**
+
 - `backend/Tests/Services/WebSourceDeployServiceSqlSourceTests.cs`
 
 **Estimated scope:** M
@@ -90,15 +96,18 @@ T1 → T2 → [Checkpoint A] → T3 → T4 → [Checkpoint B] → Done
 `WebSourcePrepare.tsx` 226 行目の「パイロット用 Web.config（例: Web.config.DC.kaios.pilot）を web.config として適用します」を、bat 実行の説明に変える。
 
 **Acceptance criteria:**
-- [x] 「各 pilot へのコピー後、pilot 側の deploy\{システム}.DC.Pilot.bat を実行して web.config を切り替えます」相当の文言
+
+- [x] 「各 pilot へのコピー後、pilot 側の deployシステム}.DC.Pilot.bat を実行して web.config を切り替えます」相当の文言
 - [x] 他の説明（robocopy 順、画像、SQL）は維持
 
 **Verification:**
+
 - [x] `tsc` と `vite build` 成功、文言目視
 
 **Dependencies:** None
 
 **Files:**
+
 - `frontend/src/pages/WebSourcePrepare.tsx`
 
 **Estimated scope:** XS
@@ -113,17 +122,20 @@ T1 → T2 → [Checkpoint A] → T3 → T4 → [Checkpoint B] → Done
 旧方式のドキュメントに移行注記を入れ、本フォルダの完了チェックを更新する。
 
 **Acceptance criteria:**
+
 - [x] `docs/pilot-webconfig-file-swap/SPEC.md` 冒頭に「本方式は `docs/pilot-webconfig-bat/` で置き換え済み」と注記
 - [x] `docs/SPEC_ISSUE25_WEBSOURCE_PILOT_DEPLOY.md` の web.config 記述に同様の注記
 - [x] `VERSIONING_GUIDE` に沿ってバージョンを更新
 - [x] 本フォルダの Success Criteria / Status を更新
 
 **Verification:**
+
 - [x] ドキュメント目視
 
 **Dependencies:** Checkpoint A
 
 **Files:**
+
 - `docs/pilot-webconfig-file-swap/SPEC.md`
 - `docs/SPEC_ISSUE25_WEBSOURCE_PILOT_DEPLOY.md`
 - `docs/issue27/SPEC.md` / `docs/issue27/PLAN.md`（web.config 手順の文言）

@@ -235,20 +235,17 @@ public class DeployService
             var srcPath = Path.Combine(config.GitRepoPath, m.Type, $"dbo.{m.Name}.sql");
             var destPath = Path.Combine(config.DeploySourcePath, $"dbo.{m.Name}.sql");
 
-            if (m.OpType == "新規")
-            {
-                await Log(w, "DETAIL", $"→ dbo.{m.Name}.sql  [新規] ALTER→CREATE 置換{tag}");
-                if (!_dryRun) await ConvertAlterToCreate(srcPath, destPath);
-            }
-            else if (m.OpType == "削除")
+            if (m.OpType == "削除")
             {
                 await Log(w, "DETAIL", $"→ dbo.{m.Name}.sql  [削除] DROP 文を生成{tag}");
                 if (!_dryRun) await GenerateDropSql(m, destPath);
             }
             else
             {
-                await Log(w, "DETAIL", $"→ dbo.{m.Name}.sql  [更新] copy{tag}");
-                if (!_dryRun) File.Copy(srcPath, destPath, overwrite: true);
+                // 更新も CREATE OR ALTER にする。Pilot 適用周期内に「新規 → 更新」と適用されると
+                // deployed/ が更新側で上書きされ、ALTER のままではオブジェクト未作成の Pilot でエラーになるため。
+                await Log(w, "DETAIL", $"→ dbo.{m.Name}.sql  [{m.OpType}] CREATE OR ALTER 変換{tag}");
+                if (!_dryRun) await ConvertToCreateOrAlter(srcPath, destPath);
             }
         }
     }
@@ -405,13 +402,11 @@ public class DeployService
         }
     }
 
-    private static async Task ConvertAlterToCreate(string srcPath, string destPath)
+    private static async Task ConvertToCreateOrAlter(string srcPath, string destPath)
     {
         var sjis = Encoding.GetEncoding("shift_jis");
         var content = await File.ReadAllTextAsync(srcPath, sjis);
-        content = content.Replace("ALTER PROCEDURE", "CREATE OR ALTER PROCEDURE", StringComparison.OrdinalIgnoreCase);
-        content = content.Replace("ALTER FUNCTION", "CREATE OR ALTER FUNCTION", StringComparison.OrdinalIgnoreCase);
-        await File.WriteAllTextAsync(destPath, content, sjis);
+        await File.WriteAllTextAsync(destPath, SqlDefinitionConverter.ToCreateOrAlter(content), sjis);
     }
 
     private static async Task GenerateDropSql(DeployModule m, string destPath)
