@@ -353,7 +353,8 @@ mkdir D:\Git\MaintenanceManagement\data
 | 必要なもの | 用途 |
 |-----------|------|
 | `SourceControlPath\git_Live Updates.bat` | Step 2: git pull |
-| `SourceControlPath\git_merge.bat` | Step 3: git merge |
+| `SourceControlPath\git_merge.bat` | Step 3: git merge（引数 `NOPUSH` で commit/push をスキップできること） |
+| `SourceControlPath\merge\git_push.bat` | Step 3: _dev 付き DB 名置換後の commit/push（無い場合は置換せず従来動作） |
 | `DeployDev2StgPath\deploy.bat` | Step 5: SQL Server への適用 |
 | `FastCopyPath`（デフォルト: `C:\Program Files\FastCopy\FastCopy.exe`） | 本番前準備のファイルコピー |
 

@@ -161,6 +161,13 @@ ORDER BY TABLE_NAME;
    → D:\Tools\SourceControl{_XX}\merge\ に書き込み
 2. git_Live Updates.bat を Process.Start で実行
 3. git_merge.bat を Process.Start で実行
+   - merge フォルダに git_push.bat がある場合（SQL Server のみ）:
+     git_merge.bat NOPUSH（DEV → master の checkout のみ）
+     → 更新対象ファイル内の _dev 付き DB 名参照（例: KaiosDB_dev.dbo.X / [KaiosDB_dev].dbo.X）から _dev を除去
+       （文字コード・改行は元のまま。置換できないファイルがあればエラーで中断し push しない）
+     → git_push.bat（git add / commit / push）
+   - git_push.bat が無い場合: 従来どおり git_merge.bat 単体で push まで実行（置換なし・WARN ログ）
+   - MariaDB（merge_MariaDB）は置換対象外
 4. SQL ファイルをコピー・変換
    - 通常: D:\STGENV\{DB}_rep\{Type}\{Name}.sql → Deploy_DEV2STG\ForNewCreation\Source\
    - 新規の場合: ALTER → CREATE に置換

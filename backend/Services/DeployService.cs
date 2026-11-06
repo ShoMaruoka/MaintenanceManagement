@@ -90,7 +90,7 @@ public class DeployService
             await Log(writer, "STEP", "3/6 git_merge.bat 実行", "merge");
             if (gitOnlyModules.Count > 0)
                 await Log(writer, "INFO", $"Git マージのみ対象: {string.Join(", ", gitOnlyModules.Select(m => m.Name))}");
-            await Step3_GitMerge(writer, dbConfig.MergePath, dryRunTag, ct);
+            await Step3_GitMergeSqlServer(writer, dbConfig, sqlServerModules, dryRunTag, ct);
             if (mariaDbModules.Count > 0)
                 await Step3_GitMerge(writer, dbConfig.MariaDbMergePath, dryRunTag, ct);
             if (gitOnlyModules.Count > 0)
@@ -190,10 +190,10 @@ public class DeployService
         await RunBatAsync(w, batPath, config.SourceControlPath, ct);
     }
 
-    private async Task Step3_GitMerge(ChannelWriter<LogEntry> w, string mergePath, string tag, CancellationToken ct)
+    private async Task Step3_GitMerge(ChannelWriter<LogEntry> w, string mergePath, string tag, CancellationToken ct, string? batArgs = null)
     {
         var batPath = Path.Combine(mergePath, "git_merge.bat");
-        await Log(w, "DETAIL", $"→ {batPath}{tag}");
+        await Log(w, "DETAIL", $"→ {batPath}{(batArgs is null ? "" : " " + batArgs)}{tag}");
 
         if (_dryRun)
         {
@@ -201,7 +201,62 @@ public class DeployService
             await Log(w, "DETAIL", "[DRY-RUN] Merge simulated (no actual git operation)");
             return;
         }
-        await RunBatAsync(w, batPath, mergePath, ct);
+        await RunBatAsync(w, batPath, mergePath, ct, batArgs);
+    }
+
+    /// <summary>
+    /// SQL Server 用の git merge。merge フォルダに git_push.bat がある場合は
+    /// 「git_merge.bat NOPUSH（checkout のみ）→ _dev 付き DB 名の置換 → git_push.bat（commit &amp; push）」
+    /// の順に実行し、開発 DB 参照が master に入らないようにする。
+    /// git_push.bat が未配置の環境では従来どおり git_merge.bat 単体で push まで行う（置換なし）。
+    /// </summary>
+    private async Task Step3_GitMergeSqlServer(
+        ChannelWriter<LogEntry> w, DbConfig config, List<DeployModule> modules, string tag, CancellationToken ct)
+    {
+        var pushBatPath = Path.Combine(config.MergePath, "git_push.bat");
+        if (!File.Exists(pushBatPath))
+        {
+            await Log(w, "WARN", $"git_push.bat が無いため _dev 付き DB 名の置換をスキップします: {pushBatPath}");
+            await Step3_GitMerge(w, config.MergePath, tag, ct);
+            return;
+        }
+
+        await Step3_GitMerge(w, config.MergePath, tag, ct, "NOPUSH");
+        await Step3a_ReplaceDevDbNames(w, config, modules, tag);
+
+        await Log(w, "DETAIL", $"→ {pushBatPath}{tag}");
+        if (_dryRun)
+        {
+            await Log(w, "DETAIL", "[DRY-RUN] Commit & push simulated (no actual git operation)");
+            return;
+        }
+        await RunBatAsync(w, pushBatPath, config.MergePath, ct);
+    }
+
+    /// <summary>
+    /// master へ取り込んだ更新対象ファイル内の _dev 付き DB 名（例: KaiosDB_dev.dbo.X）から _dev を外す。
+    /// 1 件でも置換できないファイルがあれば例外とし、git_push.bat を実行させない。
+    /// </summary>
+    private async Task Step3a_ReplaceDevDbNames(
+        ChannelWriter<LogEntry> w, DbConfig config, List<DeployModule> modules, string tag)
+    {
+        var total = 0;
+        foreach (var m in modules.Where(m => m.OpType != "削除"))
+        {
+            var path = Path.Combine(config.GitRepoPath, m.Type, $"dbo.{m.Name}.sql");
+            if (!File.Exists(path)) continue;
+
+            IReadOnlyList<string> replaced;
+            if (_dryRun)
+                DevDbNameReplacer.Replace(await File.ReadAllTextAsync(path, Encoding.GetEncoding("shift_jis")), out replaced);
+            else
+                replaced = await DevDbNameReplacer.ReplaceFileAsync(path);
+
+            if (replaced.Count == 0) continue;
+            total++;
+            await Log(w, "DETAIL", $"→ {m.Type}/dbo.{m.Name}.sql  DB 名置換: {string.Join(", ", replaced)} → _dev を除去{tag}");
+        }
+        await Log(w, "INFO", total == 0 ? "_dev 付き DB 名の参照なし" : $"_dev 付き DB 名を置換: {total} ファイル{tag}");
     }
 
     /// <summary>
@@ -428,7 +483,7 @@ public class DeployService
     /// SQL Server 用の呼び出し（Step2/Step3/Step5）は戻り値を使わないため挙動は変わらないが、
     /// MariaDB 用 deploy.bat（Step5）は "RESULT:OK:xxx.sql" 形式の行をここから受け取り成否判定に使う。
     /// </summary>
-    private async Task<List<string>> RunBatAsync(ChannelWriter<LogEntry> w, string batPath, string workingDir, CancellationToken ct)
+    private async Task<List<string>> RunBatAsync(ChannelWriter<LogEntry> w, string batPath, string workingDir, CancellationToken ct, string? batArgs = null)
     {
         var stdoutLines = new List<string>();
 
@@ -443,7 +498,7 @@ public class DeployService
         {
             FileName = "cmd.exe",
             // chcp 932 を先行して設定し、bat およびその子プロセス（PowerShell 等）が SJIS で動作するようにする
-            Arguments = $"/c \"chcp 932 > nul && \"{batPath}\"\"",
+            Arguments = $"/c \"chcp 932 > nul && \"{batPath}\"{(string.IsNullOrEmpty(batArgs) ? "" : " " + batArgs)}\"",
             WorkingDirectory = workingDir,
             RedirectStandardOutput = true,
             RedirectStandardError = true,

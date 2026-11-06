@@ -13,3 +13,4 @@ tasks/
 graphify-out/
 backend/Tests/bin/
 backend/Tests/obj/
+Tools/
