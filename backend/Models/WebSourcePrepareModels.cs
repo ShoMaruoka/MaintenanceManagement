@@ -25,6 +25,28 @@ public class WebSourceInfoResponse
     /// <summary>Pilot MariaDB 適用ルート（未設定時は空。Issue #35 B1）。</summary>
     public string PilotMariaDbSqlDeployPath { get; set; } = "";
     public List<WebSourcePilotTargetInfo> PilotTargets { get; set; } = [];
+
+    /// <summary>Webソースコピーで Web.config をコピーしないか（DB 設定。未設定時 true。pilot-webconfig-exclude）。</summary>
+    public bool ExcludeWebConfig { get; set; } = true;
+    /// <summary>除外設定の最終更新者（未設定時 null）。</summary>
+    public string? ExcludeWebConfigUpdatedBy { get; set; }
+    /// <summary>除外設定の最終更新日時（UTC ISO 8601。未設定時 null）。</summary>
+    public string? ExcludeWebConfigUpdatedAt { get; set; }
+}
+
+/// <summary>PUT /api/web-source-prepare/{dbName}/settings のボディ（admin のみ）。</summary>
+public class WebSourceSettingsRequest
+{
+    public bool ExcludeWebConfig { get; set; } = true;
+    public string UpdatedBy { get; set; } = "";
+}
+
+/// <summary>PUT settings の応答（保存後の値）。</summary>
+public class WebSourceSettingsResponse
+{
+    public bool ExcludeWebConfig { get; set; }
+    public string? UpdatedBy { get; set; }
+    public string? UpdatedAt { get; set; }
 }
 
 public class WebSourceDeployRequest

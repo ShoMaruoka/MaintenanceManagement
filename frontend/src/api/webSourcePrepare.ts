@@ -1,7 +1,7 @@
 import { fetchJson, fetchStream } from './client'
 import type { LogLine } from '../types'
 
-export type WebSourceDbName = 'kaios' | 'gos'
+export type WebSourceDbName = 'kaios' | 'gos' | 'paf' | 'duskin'
 
 export interface ApiWebSourcePilotTargetInfo {
   name: string
@@ -21,6 +21,30 @@ export interface ApiWebSourceInfo {
   /** Pilot MariaDB 適用ルート。未設定時は空（Issue #35 B1） */
   pilotMariaDbSqlDeployPath: string
   pilotTargets: ApiWebSourcePilotTargetInfo[]
+  /** Webソースコピーで Web.config をコピーしないか（DB 設定。未設定時 true） */
+  excludeWebConfig: boolean
+  /** 除外設定の最終更新者（未設定時 null） */
+  excludeWebConfigUpdatedBy?: string | null
+  /** 除外設定の最終更新日時（UTC ISO 8601。未設定時 null） */
+  excludeWebConfigUpdatedAt?: string | null
+}
+
+export interface ApiWebSourceSettings {
+  excludeWebConfig: boolean
+  updatedBy?: string | null
+  updatedAt?: string | null
+}
+
+/** Web.config 除外設定を保存する（admin のみ。それ以外は 403）。 */
+export async function updateWebSourceSettings(
+  dbName: WebSourceDbName,
+  excludeWebConfig: boolean,
+  updatedBy: string,
+): Promise<ApiWebSourceSettings> {
+  return fetchJson<ApiWebSourceSettings>(`/web-source-prepare/${dbName}/settings`, {
+    method: 'PUT',
+    body: JSON.stringify({ excludeWebConfig, updatedBy }),
+  })
 }
 
 export type WebSourceDeployStep = 'both' | 'web' | 'sql'

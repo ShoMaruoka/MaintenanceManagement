@@ -7,6 +7,9 @@ import type { DashboardStats, DeploySession } from '../types'
 
 const MONO = "'JetBrains Mono', monospace"
 
+/** stats 取得失敗時もカード枠は出す（バックエンド PilotSystems.DbNames と同じ順）。 */
+const PILOT_DB_NAMES = ['kaios', 'gos', 'paf', 'duskin']
+
 export default function Dashboard() {
   const [sessions, setSessions] = useState<DeploySession[]>([])
   const [stats, setStats] = useState<DashboardStats | null>(null)
@@ -31,6 +34,8 @@ export default function Dashboard() {
     ? (stats.successSessions / stats.totalSessions) * 100
     : null
   const runningCount = stats?.runningCount ?? 0
+  const lastPilots = stats?.lastPilots
+    ?? PILOT_DB_NAMES.map(dbName => ({ dbName, executedAt: '', executedBy: '' }))
 
   const handleExpandRow = (sessionId: number) => {
     setExpandedId(prev => prev === sessionId ? null : sessionId)
@@ -81,28 +86,21 @@ export default function Dashboard() {
               : 'なし'}
           </div>
         </div>
-        <div className="stat-card">
-          <div className="stat-card-label">Pilot 最終適用（kaios）</div>
-          <div className="stat-card-value">
-            {stats?.lastPilotKaios ? formatDateTime(stats.lastPilotKaios.executedAt) : '—'}
+      </div>
+
+      {/* Pilot 最終適用は4システム分を別段に並べる（7枚を1段に混ぜると折り返しが不揃いになるため） */}
+      <div className="stat-cards">
+        {lastPilots.map(p => (
+          <div key={p.dbName} className="stat-card">
+            <div className="stat-card-label">Pilot 最終適用（{p.dbName}）</div>
+            <div className="stat-card-value">
+              {p.executedAt ? formatDateTime(p.executedAt) : '—'}
+            </div>
+            <div className="stat-card-sub" style={{ color: '#8a9099' }}>
+              {p.executedAt ? `実行者: ${p.executedBy}` : '実行履歴なし'}
+            </div>
           </div>
-          <div className="stat-card-sub" style={{ color: '#8a9099' }}>
-            {stats?.lastPilotKaios
-              ? `実行者: ${stats.lastPilotKaios.executedBy}`
-              : '実行履歴なし'}
-          </div>
-        </div>
-        <div className="stat-card">
-          <div className="stat-card-label">Pilot 最終適用（gos）</div>
-          <div className="stat-card-value">
-            {stats?.lastPilotGos ? formatDateTime(stats.lastPilotGos.executedAt) : '—'}
-          </div>
-          <div className="stat-card-sub" style={{ color: '#8a9099' }}>
-            {stats?.lastPilotGos
-              ? `実行者: ${stats.lastPilotGos.executedBy}`
-              : '実行履歴なし'}
-          </div>
-        </div>
+        ))}
       </div>
 
       <div className="table-container">

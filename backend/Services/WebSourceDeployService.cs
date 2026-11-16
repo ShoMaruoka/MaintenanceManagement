@@ -24,6 +24,15 @@ public class WebSourceDeployService
     /// </summary>
     private static readonly string[] DefaultExcludeDirs = [".vs", "obj", "bin\\obj"];
 
+    /// <summary>
+    /// Web ソースのコピーで常に除外する、コピー元ルート直下の環境依存ファイル（pilot-webconfig-exclude）。
+    /// pilot 用の内容は web.config 切替 bat（deploy\overlays）が書き込むため、STG の値を運ばない。
+    /// </summary>
+    private static readonly string[] AlwaysExcludedRootFiles = ["AppSettings.Local.config", "connectionStrings.local.config"];
+
+    /// <summary>設定（PilotExcludeWebConfig）が ON のとき追加で除外するルート直下のファイル。</summary>
+    private const string WebConfigFileName = "Web.config";
+
     private const int MaxErrorLogLines = 50;
     private const int MaxErrorLogChars = 8000;
     private static readonly Encoding Sjis = Encoding.GetEncoding("shift_jis");
@@ -106,16 +115,19 @@ public class WebSourceDeployService
     /// robocopy を起動し、標準出力を1行ずつ <paramref name="onOutputLine"/> へ渡す。
     /// 誤操作によるコピー先ファイルの意図しない削除を避けるため、常に /E（削除同期なしの全量コピー。
     /// 既定の比較により新規・変更ファイルのみ実際にはコピーされる）で実行する（/MIR は使用しない）。
+    /// <paramref name="rootExcludeFiles"/> を指定すると、コピー元ルート直下の当該ファイルをフルパスで /XF に追加する
+    /// （ファイル名だけで指定するとサブフォルダの同名ファイルまで除外されるため）。
     /// </summary>
     public async Task<int> RunRobocopyAsync(
         string src,
         string dest,
         Action<string> onOutputLine,
-        CancellationToken ct)
+        CancellationToken ct,
+        IReadOnlyCollection<string>? rootExcludeFiles = null)
     {
         ValidateDeployPaths(src, dest);
 
-        var args = BuildArguments(src, dest);
+        var args = BuildArguments(src, dest, rootExcludeFiles);
 
         if (_dryRun)
         {
@@ -162,9 +174,21 @@ public class WebSourceDeployService
         CancellationToken ct) =>
         _processRunner.RunAsync("robocopy.exe", args, workingDirectory: null, onOutputLine, ct);
 
-    private string BuildArguments(string src, string dest)
+    /// <summary>
+    /// Web ソースのコピーで除外する、コピー元ルート直下のファイル名一覧。
+    /// Local config 2 ファイルは常に、Web.config は <paramref name="excludeWebConfig"/> が true のときだけ含める。
+    /// </summary>
+    internal static IReadOnlyList<string> BuildWebSourceRootExcludes(bool excludeWebConfig) =>
+        excludeWebConfig
+            ? [WebConfigFileName, .. AlwaysExcludedRootFiles]
+            : [.. AlwaysExcludedRootFiles];
+
+    private string BuildArguments(string src, string dest, IReadOnlyCollection<string>? rootExcludeFiles = null)
     {
-        var excludeFiles = string.Join(" ", _excludeFiles.Select(f => $"\"{f}\""));
+        var excludeFiles = string.Join(" ",
+            _excludeFiles
+                .Concat((rootExcludeFiles ?? []).Select(f => Path.Combine(src, f)))
+                .Select(f => $"\"{f}\""));
         var excludeDirs = string.Join(" ", _excludeDirs.Select(d => $"\"{d}\""));
         // /XX: コピー先にのみ存在する「余分な」ファイル・フォルダを対象外とする。
         // /MIR を使わない（削除同期をしない）運用のため、*EXTRA の検出・ログ出力自体が不要なログノイズになる。
@@ -698,12 +722,16 @@ public class WebSourceDeployService
     /// <paramref name="step"/> により実行内容を絞り込める（前回失敗した側だけを再実行するため）。
     /// "web" 指定時は SQL 適用ステップ自体を行わない。"sql" 指定時は Web ソースコピーを一切行わず、
     /// 成否に関わらず（未実行でも）無条件で SQL 適用のみを実行する。
+    /// Web ソースのコピーでは、コピー元ルート直下の AppSettings.Local.config / connectionStrings.local.config を常に除外し、
+    /// <paramref name="excludeWebConfig"/> が true（既定）のときは Web.config も除外する（pilot-webconfig-exclude）。
+    /// 画像情報準備・共通画像のコピーには除外を付けない。
     /// </summary>
     public async Task<(List<WebSourceDeployTargetResult> Targets, WebSourceSqlDeployResult? SqlDeploy)> ExecuteAsync(
         DbConfig config,
         ChannelWriter<LogEntry> writer,
         CancellationToken ct,
-        WebSourceDeployStep step = WebSourceDeployStep.Both)
+        WebSourceDeployStep step = WebSourceDeployStep.Both,
+        bool excludeWebConfig = true)
     {
         var results = new List<WebSourceDeployTargetResult>();
 
@@ -756,17 +784,24 @@ public class WebSourceDeployService
             .ToList();
         var anyImagePrepareReady = imagePrepareCategories.Any(c => c.FileCount > 0);
 
+        var rootExcludes = BuildWebSourceRootExcludes(excludeWebConfig);
+        LogLine("INFO", excludeWebConfig
+            ? "Web.config コピー: しない（設定: ON）"
+            : "Web.config コピー: する（設定: OFF）");
+
         foreach (var target in config.PilotTargets)
         {
             LogLine("STEP", $"▶ {target.Name} 適用開始");
 
             try
             {
+                LogLine("INFO", $"{target.Name}: コピー除外 {string.Join(", ", rootExcludes)}");
                 var exitCode = await RunRobocopyAsync(
                     config.WebSourcePath,
                     target.DestWebSourcePath,
                     line => LogLine("DETAIL", line),
-                    ct);
+                    ct,
+                    rootExcludes);
 
                 if (!IsRobocopySuccess(exitCode))
                 {

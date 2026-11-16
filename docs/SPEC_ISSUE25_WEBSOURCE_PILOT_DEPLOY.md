@@ -9,6 +9,7 @@ STGサーバー上のIISアプリ公開フォルダ一式を、Git使用禁止�
 - **利用者**: 運用担当者（既存のPrepareForPrd等を使っているユーザーと同一想定）
 - **成功の定義**: 画面操作だけでSTG→pilotへのWebソース転送とweb.config接続文字列の付け替えが完了し、pilotサーバー上でアプリが正しく動作すること
 - **対象システム**: pilot環境が存在するのは **kaios** と **gos** の2システムのみ（paf・duskinはpilot環境なし、対象外）
+  - > **注記（v1.8.0）**: paf・duskin も対象に追加した（kaios / gos / paf / duskin の4システム）。また Web ソースの robocopy でルート直下の `Web.config`（システムごとの設定で切替、既定は除外）と `AppSettings.Local.config` / `connectionStrings.local.config`（常に）を除外する。詳細は [`docs/pilot-webconfig-exclude/SPEC.md`](./pilot-webconfig-exclude/SPEC.md) を参照。本書の「kaios/gos のみ」「除外対象」の記述はこの注記で読み替える。
 - **対象サーバー**: pilotサーバーは **pilot1・pilot2の2台** 存在し、STGから両方へ適用する必要がある（STG → pilot1 → pilot2 の順に適用）
 
 ---

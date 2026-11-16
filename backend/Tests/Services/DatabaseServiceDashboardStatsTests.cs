@@ -1,5 +1,6 @@
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
+using MaintenanceManagement.Api.Models;
 using MaintenanceManagement.Api.Services;
 
 namespace MaintenanceManagement.Api.Tests.Services;
@@ -147,12 +148,48 @@ public class DatabaseServiceDashboardStatsTests : IDisposable
         cmd.ExecuteNonQuery();
     }
 
+    private static PilotDeploySummary Pilot(DashboardStats stats, string dbName) =>
+        Assert.Single(stats.LastPilots, p => p.DbName == dbName);
+
+    private static void AssertNoPilotHistory(DashboardStats stats, string dbName)
+    {
+        var p = Pilot(stats, dbName);
+        Assert.Equal("", p.ExecutedAt);
+        Assert.Equal("", p.ExecutedBy);
+    }
+
+    private static void AssertHasPilotHistory(DashboardStats stats, string dbName) =>
+        Assert.NotEqual("", Pilot(stats, dbName).ExecutedAt);
+
     [Fact]
-    public void GetDashboardStats_ReturnsNullPilot_WhenNoHistory()
+    public void GetDashboardStats_LastPilots_AreFourSystemsInOrder_EvenWithoutHistory()
     {
         var stats = _db.GetDashboardStats();
-        Assert.Null(stats.LastPilotKaios);
-        Assert.Null(stats.LastPilotGos);
+
+        Assert.Equal(["kaios", "gos", "paf", "duskin"], stats.LastPilots.Select(p => p.DbName));
+        Assert.All(stats.LastPilots, p => Assert.Equal("", p.ExecutedAt));
+    }
+
+    [Fact]
+    public void GetDashboardStats_PafAndDuskin_AreAggregatedIndependently()
+    {
+        var at = DateTime.UtcNow.AddHours(-2);
+        InsertPilotLog(Guid.NewGuid().ToString("n"), "paf", "pilot1", "web", "paf-user", "success", at);
+
+        var stats = _db.GetDashboardStats();
+
+        Assert.Equal("paf-user", Pilot(stats, "paf").ExecutedBy);
+        Assert.Equal(at.ToString("o"), Pilot(stats, "paf").ExecutedAt);
+        AssertNoPilotHistory(stats, "duskin");
+        AssertNoPilotHistory(stats, "kaios");
+    }
+
+    [Fact]
+    public void GetDashboardStats_ReturnsEmptyPilot_WhenNoHistory()
+    {
+        var stats = _db.GetDashboardStats();
+        AssertNoPilotHistory(stats, "kaios");
+        AssertNoPilotHistory(stats, "gos");
     }
 
     [Fact]
@@ -166,11 +203,11 @@ public class DatabaseServiceDashboardStatsTests : IDisposable
 
         var stats = _db.GetDashboardStats();
 
-        Assert.NotNull(stats.LastPilotKaios);
-        Assert.Equal("kaios", stats.LastPilotKaios!.DbName);
-        Assert.Equal("alice", stats.LastPilotKaios.ExecutedBy);
-        Assert.Equal(at.ToString("o"), stats.LastPilotKaios.ExecutedAt);
-        Assert.Null(stats.LastPilotGos);
+        AssertHasPilotHistory(stats, "kaios");
+        Assert.Equal("kaios", Pilot(stats, "kaios").DbName);
+        Assert.Equal("alice", Pilot(stats, "kaios").ExecutedBy);
+        Assert.Equal(at.ToString("o"), Pilot(stats, "kaios").ExecutedAt);
+        AssertNoPilotHistory(stats, "gos");
     }
 
     [Fact]
@@ -181,7 +218,7 @@ public class DatabaseServiceDashboardStatsTests : IDisposable
         InsertPilotLog(runId, "kaios", "pilot2", "both", "bob", "failed");
 
         var stats = _db.GetDashboardStats();
-        Assert.Null(stats.LastPilotKaios);
+        AssertNoPilotHistory(stats, "kaios");
     }
 
     [Fact]
@@ -195,8 +232,8 @@ public class DatabaseServiceDashboardStatsTests : IDisposable
         InsertPilotLog(skipOnly, "gos", "sql", "sql-skipped", "d", "success");
 
         var stats = _db.GetDashboardStats();
-        Assert.Null(stats.LastPilotKaios);
-        Assert.Null(stats.LastPilotGos);
+        AssertNoPilotHistory(stats, "kaios");
+        AssertNoPilotHistory(stats, "gos");
     }
 
     [Fact]
@@ -211,8 +248,8 @@ public class DatabaseServiceDashboardStatsTests : IDisposable
 
         var stats = _db.GetDashboardStats();
 
-        Assert.NotNull(stats.LastPilotKaios);
-        Assert.Equal("eve", stats.LastPilotKaios!.ExecutedBy);
+        AssertHasPilotHistory(stats, "kaios");
+        Assert.Equal("eve", Pilot(stats, "kaios").ExecutedBy);
     }
 
     [Fact]
@@ -229,8 +266,8 @@ public class DatabaseServiceDashboardStatsTests : IDisposable
 
         var stats = _db.GetDashboardStats();
 
-        Assert.Equal("new", stats.LastPilotKaios!.ExecutedBy);
-        Assert.Equal("gos-user", stats.LastPilotGos!.ExecutedBy);
+        Assert.Equal("new", Pilot(stats, "kaios").ExecutedBy);
+        Assert.Equal("gos-user", Pilot(stats, "gos").ExecutedBy);
     }
 
     [Fact]
@@ -246,7 +283,7 @@ public class DatabaseServiceDashboardStatsTests : IDisposable
 
         var stats = _db.GetDashboardStats();
 
-        Assert.NotNull(stats.LastPilotKaios);
-        Assert.Equal("latest-user", stats.LastPilotKaios!.ExecutedBy);
+        AssertHasPilotHistory(stats, "kaios");
+        Assert.Equal("latest-user", Pilot(stats, "kaios").ExecutedBy);
     }
 }

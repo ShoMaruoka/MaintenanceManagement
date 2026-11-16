@@ -64,6 +64,12 @@ public class DatabaseService
                 Result     TEXT NOT NULL,
                 LogDetail  TEXT
             );
+            CREATE TABLE IF NOT EXISTS AppSetting (
+                Key       TEXT PRIMARY KEY,
+                Value     TEXT NOT NULL,
+                UpdatedBy TEXT NOT NULL,
+                UpdatedAt TEXT NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS IX_WebSourceDeployLog_DbName_ExecutedAt
                 ON WebSourceDeployLog (DbName, ExecutedAt DESC);
             CREATE INDEX IF NOT EXISTS IX_DeploySessionDetail_SessionId
@@ -497,8 +503,9 @@ public class DatabaseService
             }
         }
 
-        stats.LastPilotKaios = GetLastSuccessfulPilotDeploy(conn, "kaios");
-        stats.LastPilotGos = GetLastSuccessfulPilotDeploy(conn, "gos");
+        stats.LastPilots = PilotSystems.DbNames
+            .Select(name => GetLastSuccessfulPilotDeploy(conn, name) ?? new PilotDeploySummary { DbName = name })
+            .ToList();
 
         return stats;
     }
@@ -658,6 +665,67 @@ public class DatabaseService
         public string ExecutedAt { get; init; } = "";
         public string Result { get; init; } = "";
         public string? LogDetail { get; init; }
+    }
+
+    // ── 汎用設定（AppSetting）────────────────────────────────
+
+    public AppSettingEntry? GetSetting(string key)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT Key, Value, UpdatedBy, UpdatedAt FROM AppSetting WHERE Key = $key;";
+        cmd.Parameters.AddWithValue("$key", key);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read()) return null;
+        return new AppSettingEntry(reader.GetString(0), reader.GetString(1), reader.GetString(2), reader.GetString(3));
+    }
+
+    public void UpsertSetting(string key, string value, string updatedBy)
+    {
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO AppSetting (Key, Value, UpdatedBy, UpdatedAt)
+            VALUES ($key, $value, $updatedBy, $updatedAt)
+            ON CONFLICT(Key) DO UPDATE SET
+                Value = excluded.Value,
+                UpdatedBy = excluded.UpdatedBy,
+                UpdatedAt = excluded.UpdatedAt;
+            """;
+        cmd.Parameters.AddWithValue("$key", key);
+        cmd.Parameters.AddWithValue("$value", value);
+        cmd.Parameters.AddWithValue("$updatedBy", updatedBy);
+        cmd.Parameters.AddWithValue("$updatedAt", DateTime.UtcNow.ToString("o"));
+        cmd.ExecuteNonQuery();
+    }
+
+    private static string PilotExcludeWebConfigKey(string dbName) =>
+        $"PilotExcludeWebConfig.{dbName.ToLowerInvariant()}";
+
+    /// <summary>Pilot環境適用の Web.config 除外設定。未設定なら true（除外する）。</summary>
+    public PilotExcludeWebConfigSetting GetPilotExcludeWebConfig(string dbName)
+    {
+        var entry = GetSetting(PilotExcludeWebConfigKey(dbName));
+        if (entry is null)
+            return new PilotExcludeWebConfigSetting(true, null, null);
+
+        // 想定外の値は安全側（除外する）に倒す。
+        var exclude = !bool.TryParse(entry.Value, out var parsed) || parsed;
+        return new PilotExcludeWebConfigSetting(exclude, entry.UpdatedBy, entry.UpdatedAt);
+    }
+
+    public void SetPilotExcludeWebConfig(string dbName, bool excludeWebConfig, string updatedBy) =>
+        UpsertSetting(PilotExcludeWebConfigKey(dbName), excludeWebConfig ? "true" : "false", updatedBy);
+
+    /// <summary>AppUser.Role が 'admin' のユーザーなら true。存在しない・空なら false。</summary>
+    public bool IsAdmin(string? userName)
+    {
+        if (string.IsNullOrWhiteSpace(userName)) return false;
+        using var conn = OpenConnection();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT 1 FROM AppUser WHERE UserName = $userName AND Role = 'admin' LIMIT 1;";
+        cmd.Parameters.AddWithValue("$userName", userName);
+        return cmd.ExecuteScalar() is not null;
     }
 
     private SqliteConnection OpenConnection()

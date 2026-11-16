@@ -3,7 +3,7 @@ namespace MaintenanceManagement.Api.Models;
 public class DbConfig
 {
     /// <summary>
-    /// システム識別名（例: kaios / gos）。
+    /// システム識別名（kaios / gos / paf / duskin）。
     /// pilot の web.config 切替 bat のファイル名（deploy\{Name}.DC.Pilot.bat）の導出にも使用される。
     /// </summary>
     public string Name { get; set; } = "";

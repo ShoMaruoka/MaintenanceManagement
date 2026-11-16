@@ -4,6 +4,7 @@
 
 - `docs/pilot-webconfig-file-swap/SPEC.md`（現行仕様: パイロット用ファイルの上書きコピー。本 Spec で置き換え）
 - `docs/SPEC_ISSUE25_WEBSOURCE_PILOT_DEPLOY.md`（Issue #25: Pilot環境適用の全体仕様）
+- `docs/pilot-webconfig-exclude/SPEC.md`（v1.8.0: Web ソースの robocopy でルート直下の `Web.config`（設定で切替）と `AppSettings.Local.config` / `connectionStrings.local.config`（常に）を除外。PAF / Duskin を対象に追加。**robocopy の除外は同 Spec を参照**）
 
 ## Objective
 

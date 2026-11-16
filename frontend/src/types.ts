@@ -114,7 +114,7 @@ export interface PilotRunDetail extends PilotRunSummary {
   detailsFetched?: boolean
 }
 
-/** Pilot 最終適用の要約（GET /api/history/stats）。 */
+/** Pilot 最終適用の要約（GET /api/history/stats）。履歴なしは executedAt / executedBy が空文字。 */
 export interface PilotDeploySummary {
   dbName: string
   executedAt: string
@@ -124,8 +124,8 @@ export interface PilotDeploySummary {
 /** ダッシュボード上部のサマリーカード用の集計値（GET /api/history/stats）。 */
 export interface DashboardStats {
   lastPrepare: ProductionReadyLog | null
-  lastPilotKaios: PilotDeploySummary | null
-  lastPilotGos: PilotDeploySummary | null
+  /** kaios / gos / paf / duskin の順に4件 */
+  lastPilots: PilotDeploySummary[]
   days: number
   totalSessions: number
   successSessions: number

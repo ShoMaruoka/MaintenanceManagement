@@ -19,9 +19,6 @@ public class WebSourcePrepareController : ControllerBase
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
-    /// <summary>pilot環境が存在するのは kaios/gos のみ（SPEC 参照）。</summary>
-    private static readonly string[] AllowedDbNames = ["kaios", "gos"];
-
     private readonly WebSourceDeployService _deployService;
     private readonly DatabaseService _db;
     private readonly List<DbConfig> _dbConfigs;
@@ -67,7 +64,38 @@ public class WebSourcePrepareController : ControllerBase
                 })
                 .ToList(),
         };
+        var setting = _db.GetPilotExcludeWebConfig(config.Name);
+        response.ExcludeWebConfig = setting.ExcludeWebConfig;
+        response.ExcludeWebConfigUpdatedBy = setting.UpdatedBy;
+        response.ExcludeWebConfigUpdatedAt = setting.UpdatedAt;
         return Ok(response);
+    }
+
+    /// <summary>
+    /// Web.config 除外設定を保存する（pilot-webconfig-exclude）。admin のみ。
+    /// サーバー側認証は無いため UpdatedBy の自己申告を AppUser.Role で確認する（誤操作防止の水準）。
+    /// </summary>
+    [HttpPut("{dbName}/settings")]
+    public IActionResult UpdateSettings(string dbName, [FromBody] WebSourceSettingsRequest request)
+    {
+        if (!IsAllowedDbName(dbName))
+            return NotFound(new { message = $"pilot環境が存在しないシステムです: {dbName}" });
+
+        var config = FindConfig(dbName);
+        if (config is null)
+            return NotFound(new { message = $"設定が見つかりません: {dbName}" });
+
+        if (!_db.IsAdmin(request.UpdatedBy))
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = "設定の変更は管理者のみ可能です" });
+
+        _db.SetPilotExcludeWebConfig(config.Name, request.ExcludeWebConfig, request.UpdatedBy);
+        var saved = _db.GetPilotExcludeWebConfig(config.Name);
+        return Ok(new WebSourceSettingsResponse
+        {
+            ExcludeWebConfig = saved.ExcludeWebConfig,
+            UpdatedBy = saved.UpdatedBy,
+            UpdatedAt = saved.UpdatedAt,
+        });
     }
 
     [HttpPost("{dbName}/stream")]
@@ -101,7 +129,10 @@ public class WebSourcePrepareController : ControllerBase
 
         try
         {
-            var (results, sqlDeploy) = await _deployService.ExecuteAsync(config, channel.Writer, ct, step);
+            // 除外設定は実行開始時点の DB 値を使う（画面からの値は受け取らない）。
+            var excludeWebConfig = _db.GetPilotExcludeWebConfig(config.Name).ExcludeWebConfig;
+            var (results, sqlDeploy) = await _deployService.ExecuteAsync(
+                config, channel.Writer, ct, step, excludeWebConfig);
 
             channel.Writer.Complete();
             await writeTask;
@@ -172,8 +203,8 @@ public class WebSourcePrepareController : ControllerBase
         _ => WebSourceDeployStep.Both,
     };
 
-    private static bool IsAllowedDbName(string dbName) =>
-        AllowedDbNames.Contains(dbName, StringComparer.OrdinalIgnoreCase);
+    /// <summary>pilot環境が存在するシステム（kaios / gos / paf / duskin）のみ許可する。</summary>
+    private static bool IsAllowedDbName(string dbName) => PilotSystems.IsSupported(dbName);
 
     private DbConfig? FindConfig(string dbName) =>
         _dbConfigs.FirstOrDefault(c => c.Name.Equals(dbName, StringComparison.OrdinalIgnoreCase));

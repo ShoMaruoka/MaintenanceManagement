@@ -3,11 +3,13 @@ import type { LogLine } from '../types'
 import {
   getWebSourceInfo,
   startWebSourceDeploy,
+  updateWebSourceSettings,
   type ApiWebSourceInfo,
   type ApiWebSourceDeployDone,
   type WebSourceDbName,
   type WebSourceDeployStep,
 } from '../api/webSourcePrepare'
+import { formatDateTime } from '../api/history'
 import { useUser } from '../context/UserContext'
 
 type PageState = 'select' | 'confirm' | 'running' | 'done'
@@ -15,6 +17,8 @@ type PageState = 'select' | 'confirm' | 'running' | 'done'
 const DB_OPTIONS: { value: WebSourceDbName; label: string }[] = [
   { value: 'kaios', label: 'kaios' },
   { value: 'gos', label: 'gos' },
+  { value: 'paf', label: 'paf' },
+  { value: 'duskin', label: 'duskin' },
 ]
 
 const STEP_OPTIONS: { value: WebSourceDeployStep; label: string; desc: string }[] = [
@@ -24,7 +28,8 @@ const STEP_OPTIONS: { value: WebSourceDeployStep; label: string; desc: string }[
 ]
 
 export default function WebSourcePrepare() {
-  const { currentUser } = useUser()
+  const { currentUser, currentRole } = useUser()
+  const isAdmin = currentRole === 'admin'
   const [dbName, setDbName] = useState<WebSourceDbName>('kaios')
   const [step, setStep] = useState<WebSourceDeployStep>('both')
   const [info, setInfo] = useState<ApiWebSourceInfo | null>(null)
@@ -34,6 +39,8 @@ export default function WebSourcePrepare() {
   const [logLines, setLogLines] = useState<LogLine[]>([])
   const [currentTarget, setCurrentTarget] = useState<string>('')
   const [result, setResult] = useState<ApiWebSourceDeployDone | null>(null)
+  const [savingSetting, setSavingSetting] = useState(false)
+  const [settingError, setSettingError] = useState<string>('')
   const logRef = useRef<HTMLDivElement>(null)
 
   // info取得のレース対策: 最後に発行したリクエストの世代のみ反映する
@@ -63,8 +70,39 @@ export default function WebSourcePrepare() {
   }, [])
 
   useEffect(() => {
+    setSettingError('')
     void loadInfo(dbName)
   }, [dbName, loadInfo])
+
+  /** Web.config 除外設定のトグル。即時保存し、失敗時は元の値に戻す（画面上は楽観更新）。 */
+  async function toggleExcludeWebConfig(next: boolean) {
+    if (!info) return
+    const target = dbName
+    const prev = info
+    // 保存中にシステム切替（loadInfo 再発行）があれば結果を反映しない
+    const seq = infoRequestSeq.current
+    const stale = () => seq !== infoRequestSeq.current
+    setSettingError('')
+    setSavingSetting(true)
+    setInfo({ ...prev, excludeWebConfig: next })
+    try {
+      const saved = await updateWebSourceSettings(target, next, currentUser ?? '')
+      if (stale()) return
+      setInfo({
+        ...prev,
+        excludeWebConfig: saved.excludeWebConfig,
+        excludeWebConfigUpdatedBy: saved.updatedBy ?? null,
+        excludeWebConfigUpdatedAt: saved.updatedAt ?? null,
+      })
+    } catch (err) {
+      if (stale()) return
+      setInfo(prev)
+      const message = (err as Error).message
+      setSettingError(message.includes('403') ? '設定の変更は管理者のみ可能です' : `設定の保存に失敗しました: ${message}`)
+    } finally {
+      setSavingSetting(false)
+    }
+  }
 
   function handleLog(line: LogLine) {
     setLogLines(prev => [...prev, line])
@@ -221,9 +259,10 @@ export default function WebSourcePrepare() {
     <div>
       <div style={{ marginBottom: 16, fontSize: 12, color: '#6b7280', lineHeight: 1.6 }}>
         STG サーバーの Web ソース（公開フォルダ）を pilot1 → pilot2 の順に自動でコピーします（削除同期なしの全量コピーのみ）。
+        ルート直下の AppSettings.Local.config / connectionStrings.local.config は常にコピーしません。Web.config は下の設定に従います。
         続けて画像情報準備の Images / news / pdf を、各 pilot の Web ルート直下の同名フォルダへコピーします。
         共通画像フォルダは別系統で、各 pilot の Images\products へコピーします。
-        各 pilot へのコピー後、その pilot 側の deploy フォルダの切替 bat（例: deploy\Kaios.DC.Pilot.bat / deploy\Gos.DC.Pilot.bat）を実行して web.config を切り替えます。
+        各 pilot へのコピー後、その pilot 側の deploy フォルダの切替 bat（deploy\{'{システム名}'}.DC.Pilot.bat。例: deploy\Kaios.DC.Pilot.bat / deploy\Paf.DC.Pilot.bat）を実行し、Local config を pilot 用に切り替えます。
         pilot1 が失敗した場合、pilot2 は実行されません。
         すべて成功した場合、続けて SQL ファイルの pilot 環境への適用（コピー＋View DB名置換＋deploy.bat実行）を行います。
       </div>
@@ -267,6 +306,37 @@ export default function WebSourcePrepare() {
                   </div>
                 </div>
               ))}
+            </div>
+
+            <div style={{ marginTop: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>Web.config の扱い</div>
+              <label style={{
+                display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 12,
+                cursor: isAdmin && !savingSetting && pageState === 'select' ? 'pointer' : 'not-allowed',
+              }}>
+                <input
+                  type="checkbox"
+                  checked={info.excludeWebConfig}
+                  disabled={!isAdmin || savingSetting || pageState !== 'select'}
+                  onChange={e => void toggleExcludeWebConfig(e.target.checked)}
+                />
+                Web.config をコピーしない
+                {savingSetting && <span style={{ color: '#8a9099' }}>保存中...</span>}
+              </label>
+              <div style={{ fontSize: 11, color: '#8a9099', marginTop: 4 }}>
+                {info.excludeWebConfigUpdatedAt
+                  ? `最終更新: ${formatDateTime(info.excludeWebConfigUpdatedAt)}（${info.excludeWebConfigUpdatedBy ?? '-'}）`
+                  : '既定値（コピーしない）'}
+                {!isAdmin && ' ・ 変更は管理者のみ'}
+              </div>
+              {info.excludeWebConfig && (
+                <div style={{ marginTop: 6, padding: '8px 12px', background: '#fbf1dd', border: '1px solid #ece2cf', borderRadius: 6, fontSize: 11.5, color: '#7a6433' }}>
+                  開発での Web.config の変更は pilot に反映されません（手作業での反映が必要です）。
+                </div>
+              )}
+              {settingError && (
+                <div style={{ marginTop: 6, fontSize: 11.5, color: '#c5283d' }}>{settingError}</div>
+              )}
             </div>
           </div>
         ) : null}
